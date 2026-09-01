@@ -245,6 +245,10 @@ class BridgeApp:
                     additional_headers={
                         "Authorization": "Bearer " + self.shared_secret
                     },
+                    # The control plane is directly reachable over public HTTPS.
+                    # Ignore shell/system SOCKS proxy variables; websockets 15
+                    # otherwise requires the optional python-socks dependency.
+                    proxy=None,
                     ping_interval=20,
                     ping_timeout=20,
                     max_size=1_048_576,
