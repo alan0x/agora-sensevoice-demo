@@ -23,23 +23,25 @@ the App Certificate in this repository, the browser, or the LAN bridge.
 
 ## LAN bridge host
 
-Use Linux x86_64 or arm64 with Python 3.10+:
+The current Apple Silicon Mac has already loaded Agora Server SDK 2.4.9 and has
+a ready Python 3.13 virtual environment. For this demo:
 
 ```bash
 cd bridge
-python3.10 -m venv .venv
-. .venv/bin/activate
-pip install -r requirements.txt
-
-export CONTROL_WS_URL=wss://asr-demo.example.com/ws/bridge
-export BRIDGE_SHARED_SECRET='<same random value as VPS>'
-export SENSEVOICE_URL='http://127.0.0.1:8000/v1/audio/transcriptions'
-export SENSEVOICE_MODEL='SenseVoiceSmall'
-python -m bridge.main --mode real
+cp .env.example .env
+# Set CONTROL_WS_URL and BRIDGE_SHARED_SECRET in .env.
+bash start-real.sh
 ```
 
-If SenseVoice does not expose an OpenAI-compatible multipart endpoint, adapt
-`bridge/sensevoice.py`; no other component needs to change.
+Agora documents macOS as a coding/testing platform, which fits this demo. Move
+the bridge to a supported Linux host before production use.
+
+The adapter already matches the running SenseVoice JSON/base64 contract. Before
+joining Agora, it can be checked with a real 16 kHz mono WAV file:
+
+```bash
+python smoke_sensevoice_live.py /path/to/16k-mono.wav
+```
 
 ## Acceptance sequence
 
@@ -49,3 +51,5 @@ If SenseVoice does not expose an OpenAI-compatible multipart endpoint, adapt
 4. Speak one short Chinese sentence and wait for the final transcript.
 5. Try “立即断句”, mute/unmute, then end the session.
 6. Confirm the browser never connects directly to the LAN address.
+7. Confirm the displayed final text matches the sentence actually spoken; mock
+   output is not accepted for this checklist.

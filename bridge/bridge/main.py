@@ -39,7 +39,8 @@ class RealSession:
             url=os.environ["SENSEVOICE_URL"],
             model=os.getenv("SENSEVOICE_MODEL", "SenseVoiceSmall"),
             api_key=os.getenv("SENSEVOICE_API_KEY", ""),
-            language=os.getenv("SENSEVOICE_LANGUAGE", "auto"),
+            language=os.getenv("SENSEVOICE_LANGUAGE", "Chinese"),
+            protocol=os.getenv("SENSEVOICE_PROTOCOL", "octos-json"),
         )
         self.receiver = AgoraReceiver(
             appid=agora["appId"],
@@ -292,7 +293,7 @@ async def async_main(args: argparse.Namespace) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Agora to SenseVoice LAN bridge")
     parser.add_argument(
-        "--mode", choices=("mock", "real"), default=os.getenv("BRIDGE_MODE", "mock")
+        "--mode", choices=("mock", "real"), default=os.getenv("BRIDGE_MODE", "real")
     )
     parser.add_argument(
         "--control-ws-url",

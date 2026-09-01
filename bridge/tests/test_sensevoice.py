@@ -1,6 +1,10 @@
+import base64
+import json
 import unittest
 
-from bridge.sensevoice import extract_text, pcm16_to_wav
+import httpx
+
+from bridge.sensevoice import SenseVoiceClient, extract_text, pcm16_to_wav
 
 
 class SenseVoiceAdapterTests(unittest.TestCase):
@@ -13,6 +17,28 @@ class SenseVoiceAdapterTests(unittest.TestCase):
         payload = pcm16_to_wav(bytes(320))
         self.assertEqual(payload[:4], b"RIFF")
         self.assertIn(b"WAVE", payload[:16])
+
+
+class SenseVoiceHttpTests(unittest.IsolatedAsyncioTestCase):
+    async def test_uses_octos_json_base64_contract(self):
+        captured = {}
+
+        def handle(request):
+            captured.update(json.loads(request.content))
+            return httpx.Response(200, json={"text": "真实识别", "rejected": False})
+
+        client = SenseVoiceClient("http://sensevoice/v1/audio/transcriptions")
+        await client._client.aclose()
+        client._client = httpx.AsyncClient(transport=httpx.MockTransport(handle))
+        try:
+            text = await client.transcribe(bytes(320))
+        finally:
+            await client.close()
+
+        self.assertEqual(text, "真实识别")
+        self.assertEqual(captured["language"], "Chinese")
+        self.assertEqual(captured["response_format"], "verbose_json")
+        self.assertEqual(base64.b64decode(captured["file"])[:4], b"RIFF")
 
 
 if __name__ == "__main__":
