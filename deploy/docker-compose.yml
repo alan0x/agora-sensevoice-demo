@@ -1,12 +1,28 @@
+name: agora-sensevoice
+
 services:
   control-plane:
     build:
       context: ../control-plane
     image: agora-sensevoice-control-plane:demo
+    pull_policy: never
     restart: unless-stopped
-    env_file: .env
+    env_file:
+      - ${CONTROL_PLANE_ENV_FILE:-.env}
     ports:
       - "127.0.0.1:${CONTROL_PLANE_PORT:-18080}:8080"
+    networks:
+      control_internal:
+      shared_network:
+        aliases:
+          - agora-sensevoice-control-plane
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "5"
     healthcheck:
       test: ["CMD", "/usr/local/bin/control-plane", "--healthcheck"]
       interval: 15s
@@ -23,8 +39,23 @@ services:
     restart: unless-stopped
     depends_on:
       control-plane:
-        condition: service_started
+        condition: service_healthy
     environment:
       CONTROL_WS_URL: ws://control-plane:8080/ws/bridge
       BRIDGE_SHARED_SECRET: ${BRIDGE_SHARED_SECRET}
       LOG_LEVEL: INFO
+    networks:
+      - control_internal
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "5"
+
+networks:
+  control_internal:
+    driver: bridge
+  shared_network:
+    external: true

@@ -1,12 +1,50 @@
-# Put this inside the `server {}` block that owns your TLS certificate.
-location / {
-    proxy_pass http://127.0.0.1:18080;
-    proxy_http_version 1.1;
-    proxy_set_header Host $host;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto $scheme;
-    proxy_set_header Upgrade $http_upgrade;
-    proxy_set_header Connection "upgrade";
-    proxy_read_timeout 3600s;
-    proxy_send_timeout 3600s;
+# Add this file's contents inside the existing Nginx `http { ... }` block.
+# The existing Nginx container and the control-plane container must both join
+# the external Docker network named `shared_network`.
+
+map $http_upgrade $asr_connection_upgrade {
+    default upgrade;
+    ''      close;
+}
+
+server {
+    listen 80;
+    server_name asr.pitun.cc;
+
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    server_name asr.pitun.cc;
+
+    # Change these paths if the certificate uses different mounted filenames
+    # inside the existing Nginx container.
+    ssl_certificate /etc/nginx/certs/asr.pitun.cc_bundle.pem;
+    ssl_certificate_key /etc/nginx/certs/asr.pitun.cc.key;
+    ssl_protocols TLSv1.2 TLSv1.3;
+
+    client_max_body_size 64k;
+    resolver 127.0.0.11 valid=10s ipv6=off;
+
+    location / {
+        # Docker DNS resolves the alias again after a container replacement.
+        set $asr_upstream agora-sensevoice-control-plane:8080;
+        proxy_pass http://$asr_upstream;
+        proxy_http_version 1.1;
+
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+
+        # Required by /ws/bridge and /ws/client/{id}.
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $asr_connection_upgrade;
+        proxy_buffering off;
+        proxy_connect_timeout 10s;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+    }
 }

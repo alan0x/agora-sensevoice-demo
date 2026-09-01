@@ -23,8 +23,8 @@ flowchart LR
 2. VPS 创建 `deploy/.env`，使用真实配置：
 
    ```dotenv
-   PUBLIC_BASE_URL=https://asr-demo.example.com
-   ALLOWED_ORIGIN=https://asr-demo.example.com
+   PUBLIC_BASE_URL=https://asr.pitun.cc
+   ALLOWED_ORIGIN=https://asr.pitun.cc
    BRIDGE_SHARED_SECRET=<至少 16 位的随机密钥>
    DEMO_MODE=false
    AGORA_APP_ID=<APP_ID>
