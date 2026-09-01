@@ -40,13 +40,14 @@ Bridge to control-plane:
 {"type":"session.closed","sessionId":"..."}
 ```
 
-## Deliberate demo constraints
+## Current non-production constraints
 
 - One active session.
 - Sessions live in memory.
 - Two pre-generated RTC tokens use one fixed channel and two fixed UIDs.
 - ASR results return over the control-plane WebSocket, not Agora RTM.
 
-These constraints minimize the number of moving parts for the first demo. The
+These constraints affect scale and credential management only. The presentation
+path still uses real browser audio, Agora RTC, and SenseVoice inference. The
 production follow-up should add dynamic AccessToken2 issuance, persistent session
 state, per-user authorization, rate limits and multi-session routing.

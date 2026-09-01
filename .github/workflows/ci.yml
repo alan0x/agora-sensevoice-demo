@@ -27,4 +27,6 @@ jobs:
         with:
           node-version: "24"
       - name: Browser JavaScript syntax
-        run: node --check control-plane/static/app.js
+        run: |
+          node --check control-plane/static/app.js
+          bash -n bridge/start-real.sh

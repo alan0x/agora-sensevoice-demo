@@ -1,13 +1,9 @@
-"""SenseVoice HTTP adapter.
+"""SenseVoice HTTP adapter for the ASR server running on this Mac."""
 
-The default contract is the OpenAI-compatible `/audio/transcriptions` shape.
-If the existing SenseVoice server uses another schema, this is the only module
-that needs adapting.
-"""
-
+import base64
 import io
 import wave
-from typing import Any, Dict, Optional
+from typing import Any
 
 import httpx
 
@@ -18,13 +14,15 @@ class SenseVoiceClient:
         url: str,
         model: str = "SenseVoiceSmall",
         api_key: str = "",
-        language: str = "auto",
+        language: str = "Chinese",
+        protocol: str = "octos-json",
         timeout_seconds: float = 30.0,
     ) -> None:
         self.url = url
         self.model = model
         self.api_key = api_key
         self.language = language
+        self.protocol = protocol
         self._client = httpx.AsyncClient(timeout=timeout_seconds)
 
     async def transcribe(self, pcm: bytes) -> str:
@@ -32,15 +30,28 @@ class SenseVoiceClient:
         headers = {}
         if self.api_key:
             headers["Authorization"] = "Bearer " + self.api_key
-        data = {"model": self.model, "response_format": "json"}
-        if self.language and self.language != "auto":
-            data["language"] = self.language
-        response = await self._client.post(
-            self.url,
-            headers=headers,
-            data=data,
-            files={"file": ("speech.wav", wav_bytes, "audio/wav")},
-        )
+        if self.protocol == "octos-json":
+            response = await self._client.post(
+                self.url,
+                headers=headers,
+                json={
+                    "file": base64.b64encode(wav_bytes).decode("ascii"),
+                    "language": self.language,
+                    "response_format": "verbose_json",
+                },
+            )
+        elif self.protocol == "openai-multipart":
+            data = {"model": self.model, "response_format": "json"}
+            if self.language and self.language != "auto":
+                data["language"] = self.language
+            response = await self._client.post(
+                self.url,
+                headers=headers,
+                data=data,
+                files={"file": ("speech.wav", wav_bytes, "audio/wav")},
+            )
+        else:
+            raise ValueError("Unsupported SENSEVOICE_PROTOCOL: " + self.protocol)
         response.raise_for_status()
         return extract_text(response.json()).strip()
 
