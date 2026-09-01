@@ -147,6 +147,13 @@ DEMO_BRIDGE_RTC_TOKEN=<TEMP_BRIDGE_TOKEN>
 
 两个 Token 必须属于相同 App ID、相同频道 `sensevoice-demo`，并分别绑定 UID `1001`、`9001`。不要把 App Certificate 放到 VPS 或浏览器。
 
+本 VPS 的现有 Nginx 运行在 Docker 中，并使用外部网络
+`shared_network`。首次启动前确认该网络存在：
+
+```bash
+docker network inspect shared_network >/dev/null 2>&1 || docker network create shared_network
+```
+
 启动已经加载的镜像，明确禁止 VPS 重新构建：
 
 ```bash
@@ -165,10 +172,23 @@ curl http://127.0.0.1:18080/api/v1/status
 
 ## 9. VPS 配 HTTPS
 
-参考 `deploy/nginx.conf.example`，把 HTTPS 子域反代至 `127.0.0.1:18080`，保留 WebSocket Upgrade headers。检查：
+本项目使用 `asr.pitun.cc`。参考 `deploy/nginx.conf.example`，把其中的
+`map` 和两个 `server` 块加入现有 Nginx 配置的 `http { ... }` 内。Nginx
+容器和 control-plane 都连接 `shared_network`，Nginx 通过 Docker 网络别名
+`agora-sensevoice-control-plane:8080` 访问控制面。必须保留 WebSocket
+Upgrade headers。
+
+先测试配置，再重新加载现有 Nginx：
 
 ```bash
-curl https://<ASR_SUBDOMAIN>/healthz
+docker compose exec nginx nginx -t
+docker compose exec nginx nginx -s reload
+```
+
+检查：
+
+```bash
+curl https://asr.pitun.cc/healthz
 ```
 
 浏览器麦克风要求安全上下文，所以最终页面必须使用 HTTPS，不能用 VPS IP 的 HTTP 页面代替。
