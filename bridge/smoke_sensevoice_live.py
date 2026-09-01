@@ -1,4 +1,4 @@
-"""Send a real 16 kHz mono WAV file to the configured SenseVoice server."""
+"""Send a real 16 kHz mono WAV file to the configured private ASR server."""
 
 import argparse
 import asyncio
@@ -27,18 +27,25 @@ def read_pcm(path: Path) -> bytes:
 async def run(audio_path: Path) -> None:
     client = SenseVoiceClient(
         url=os.getenv(
-            "SENSEVOICE_URL",
-            "http://127.0.0.1:8094/v1/audio/transcriptions",
+            "ASR_URL",
+            os.getenv(
+                "SENSEVOICE_URL",
+                "http://127.0.0.1:8080/v1/audio/transcriptions",
+            ),
         ),
-        language=os.getenv("SENSEVOICE_LANGUAGE", "Chinese"),
-        protocol=os.getenv("SENSEVOICE_PROTOCOL", "octos-json"),
+        language=os.getenv(
+            "ASR_LANGUAGE", os.getenv("SENSEVOICE_LANGUAGE", "Chinese")
+        ),
+        protocol=os.getenv(
+            "ASR_PROTOCOL", os.getenv("SENSEVOICE_PROTOCOL", "octos-json")
+        ),
     )
     try:
         text = await client.transcribe(read_pcm(audio_path))
     finally:
         await client.close()
     if not text:
-        raise RuntimeError("SenseVoice returned an empty transcript")
+        raise RuntimeError("ASR returned an empty transcript")
     print(text)
 
 

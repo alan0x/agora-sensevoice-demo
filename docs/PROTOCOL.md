@@ -48,6 +48,6 @@ Bridge to control-plane:
 - ASR results return over the control-plane WebSocket, not Agora RTM.
 
 These constraints affect scale and credential management only. The presentation
-path still uses real browser audio, Agora RTC, and SenseVoice inference. The
+path still uses real browser audio, Agora RTC, and OminiX ASR inference. The
 production follow-up should add dynamic AccessToken2 issuance, persistent session
 state, per-user authorization, rate limits and multi-session routing.

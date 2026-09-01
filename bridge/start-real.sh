@@ -29,8 +29,9 @@ if [[ -z "${BRIDGE_SHARED_SECRET:-}" || "${BRIDGE_SHARED_SECRET}" == replace-* ]
   exit 1
 fi
 
-if ! curl --fail --silent --show-error http://127.0.0.1:8094/health >/dev/null; then
-  echo "SenseVoice health check failed at http://127.0.0.1:8094/health." >&2
+ASR_HEALTH_URL="${ASR_HEALTH_URL:-http://127.0.0.1:8080/health}"
+if ! curl --fail --silent --show-error "$ASR_HEALTH_URL" >/dev/null; then
+  echo "ASR health check failed at $ASR_HEALTH_URL." >&2
   exit 1
 fi
 

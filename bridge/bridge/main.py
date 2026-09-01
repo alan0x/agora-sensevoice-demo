@@ -36,11 +36,15 @@ class RealSession:
             SegmenterConfig(threshold_dbfs=env_float("VAD_THRESHOLD_DBFS", -38.0))
         )
         self.asr = SenseVoiceClient(
-            url=os.environ["SENSEVOICE_URL"],
-            model=os.getenv("SENSEVOICE_MODEL", "SenseVoiceSmall"),
-            api_key=os.getenv("SENSEVOICE_API_KEY", ""),
-            language=os.getenv("SENSEVOICE_LANGUAGE", "Chinese"),
-            protocol=os.getenv("SENSEVOICE_PROTOCOL", "octos-json"),
+            url=os.getenv("ASR_URL") or os.environ["SENSEVOICE_URL"],
+            model=os.getenv("ASR_MODEL", os.getenv("SENSEVOICE_MODEL", "qwen3-asr")),
+            api_key=os.getenv("ASR_API_KEY", os.getenv("SENSEVOICE_API_KEY", "")),
+            language=os.getenv(
+                "ASR_LANGUAGE", os.getenv("SENSEVOICE_LANGUAGE", "Chinese")
+            ),
+            protocol=os.getenv(
+                "ASR_PROTOCOL", os.getenv("SENSEVOICE_PROTOCOL", "octos-json")
+            ),
         )
         self.receiver = AgoraReceiver(
             appid=agora["appId"],
@@ -99,7 +103,7 @@ class RealSession:
         except asyncio.CancelledError:
             raise
         except Exception as exc:
-            logger.exception("SenseVoice request failed")
+            logger.exception("ASR request failed")
             await self.emit(
                 {
                     "type": "asr.error",
@@ -125,7 +129,7 @@ class RealSession:
 class MockSession:
     LINES = [
         "声网负责把浏览器的实时音频安全地送到内网桥接器。",
-        "SenseVoice 仍然运行在公司内网，不需要开放入站端口。",
+        "OminiX ASR 仍然运行在公司内网，不需要开放入站端口。",
         "这台 VPS 只负责会话控制和识别文本转发。",
     ]
 
@@ -201,8 +205,8 @@ class BridgeApp:
             if self.mode == "mock":
                 self.session = MockSession(session_id, self.emit)
             else:
-                if not os.getenv("SENSEVOICE_URL"):
-                    raise RuntimeError("SENSEVOICE_URL is required in real mode")
+                if not (os.getenv("ASR_URL") or os.getenv("SENSEVOICE_URL")):
+                    raise RuntimeError("ASR_URL is required in real mode")
                 self.session = RealSession(session_id, payload["agora"], self.emit)
             try:
                 await self.session.start()
@@ -295,7 +299,7 @@ async def async_main(args: argparse.Namespace) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Agora to SenseVoice LAN bridge")
+    parser = argparse.ArgumentParser(description="Agora to private ASR LAN bridge")
     parser.add_argument(
         "--mode", choices=("mock", "real"), default=os.getenv("BRIDGE_MODE", "real")
     )

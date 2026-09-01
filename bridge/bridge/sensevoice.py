@@ -1,4 +1,4 @@
-"""SenseVoice HTTP adapter for the ASR server running on this Mac."""
+"""JSON/base64 adapter for the private ASR server running on this Mac."""
 
 import base64
 import io
@@ -12,7 +12,7 @@ class SenseVoiceClient:
     def __init__(
         self,
         url: str,
-        model: str = "SenseVoiceSmall",
+        model: str = "qwen3-asr",
         api_key: str = "",
         language: str = "Chinese",
         protocol: str = "octos-json",
@@ -51,7 +51,7 @@ class SenseVoiceClient:
                 files={"file": ("speech.wav", wav_bytes, "audio/wav")},
             )
         else:
-            raise ValueError("Unsupported SENSEVOICE_PROTOCOL: " + self.protocol)
+            raise ValueError("Unsupported ASR_PROTOCOL: " + self.protocol)
         response.raise_for_status()
         return extract_text(response.json()).strip()
 
@@ -75,7 +75,7 @@ def extract_text(payload: Any) -> str:
     if isinstance(payload, list) and payload:
         return extract_text(payload[0])
     if not isinstance(payload, dict):
-        raise ValueError("SenseVoice response does not contain text")
+        raise ValueError("ASR response does not contain text")
     for key in ("text", "transcript", "result"):
         value = payload.get(key)
         if isinstance(value, str):
@@ -87,4 +87,4 @@ def extract_text(payload: Any) -> str:
                 return extract_text(value)
             except ValueError:
                 pass
-    raise ValueError("SenseVoice response does not contain text")
+    raise ValueError("ASR response does not contain text")
