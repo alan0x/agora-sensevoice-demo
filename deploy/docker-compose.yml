@@ -1,0 +1,30 @@
+services:
+  control-plane:
+    build:
+      context: ../control-plane
+    image: agora-sensevoice-control-plane:demo
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "127.0.0.1:${CONTROL_PLANE_PORT:-18080}:8080"
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/control-plane", "--healthcheck"]
+      interval: 15s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+
+  mock-bridge:
+    profiles: ["mock"]
+    build:
+      context: ../bridge
+      dockerfile: Dockerfile.mock
+    image: agora-sensevoice-mock-bridge:demo
+    restart: unless-stopped
+    depends_on:
+      control-plane:
+        condition: service_started
+    environment:
+      CONTROL_WS_URL: ws://control-plane:8080/ws/bridge
+      BRIDGE_SHARED_SECRET: ${BRIDGE_SHARED_SECRET}
+      LOG_LEVEL: INFO

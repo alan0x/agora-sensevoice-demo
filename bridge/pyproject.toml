@@ -1,0 +1,9 @@
+[project]
+name = "agora-sensevoice-bridge"
+version = "0.1.0"
+description = "LAN-side Agora RTC to SenseVoice bridge"
+requires-python = ">=3.10"
+
+[tool.ruff]
+line-length = 96
+target-version = "py310"

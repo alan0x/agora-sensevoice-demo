@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark" />
+    <title>Agora × SenseVoice 实时 ASR Demo</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="glow glow-one"></div>
+    <div class="glow glow-two"></div>
+    <main class="shell">
+      <header class="hero">
+        <div>
+          <p class="eyebrow">PRIVATE ASR · PUBLIC RTC</p>
+          <h1>Agora × SenseVoice</h1>
+          <p class="lede">浏览器只接入声网 RTC；内网桥接器拿到 PCM 后调用本地 ASR，识别结果经轻量控制面返回。</p>
+        </div>
+        <div id="modeBadge" class="mode-badge">检测模式…</div>
+      </header>
+
+      <section class="topology" aria-label="链路状态">
+        <div class="node">
+          <span class="status-dot" id="browserDot"></span>
+          <div><strong>浏览器</strong><small>Agora Web SDK</small></div>
+        </div>
+        <span class="connector"></span>
+        <div class="node">
+          <span class="status-dot" id="agoraDot"></span>
+          <div><strong>Agora RTC</strong><small>实时音频传输</small></div>
+        </div>
+        <span class="connector"></span>
+        <div class="node">
+          <span class="status-dot" id="bridgeDot"></span>
+          <div><strong>内网 Bridge</strong><small>16 kHz PCM</small></div>
+        </div>
+        <span class="connector"></span>
+        <div class="node">
+          <span class="status-dot" id="asrDot"></span>
+          <div><strong>SenseVoice</strong><small>本地推理</small></div>
+        </div>
+      </section>
+
+      <section class="workspace">
+        <article class="panel transcript-panel">
+          <div class="panel-head">
+            <div>
+              <p class="panel-kicker">LIVE TRANSCRIPT</p>
+              <h2>实时转写</h2>
+            </div>
+            <div class="audio-level" aria-label="麦克风音量">
+              <i></i><i></i><i></i><i></i><i></i><i></i>
+            </div>
+          </div>
+          <div id="transcript" class="transcript" aria-live="polite">
+            <p class="placeholder">点击“开始识别”，然后对着麦克风讲话。</p>
+          </div>
+          <p id="partial" class="partial"></p>
+        </article>
+
+        <aside class="panel control-panel">
+          <p class="panel-kicker">SESSION CONTROL</p>
+          <h2>演示控制</h2>
+          <button id="startBtn" class="primary">开始识别</button>
+          <div class="button-row">
+            <button id="muteBtn" disabled>静音</button>
+            <button id="commitBtn" disabled>立即断句</button>
+          </div>
+          <button id="stopBtn" class="danger" disabled>结束会话</button>
+
+          <dl class="session-meta">
+            <div><dt>会话</dt><dd id="sessionId">—</dd></div>
+            <div><dt>状态</dt><dd id="sessionState">待机</dd></div>
+            <div><dt>Bridge</dt><dd id="bridgeState">检测中</dd></div>
+          </dl>
+          <details>
+            <summary>运行日志</summary>
+            <pre id="eventLog"></pre>
+          </details>
+        </aside>
+      </section>
+
+      <footer>
+        <span>音频路径：Browser → Agora → LAN Bridge → SenseVoice</span>
+        <span>文本路径：LAN Bridge → VPS WebSocket → Browser</span>
+      </footer>
+    </main>
+
+    <script src="https://download.agora.io/sdk/release/AgoraRTC_N-4.24.7.js"></script>
+    <script src="/app.js" defer></script>
+  </body>
+</html>
