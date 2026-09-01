@@ -11,3 +11,4 @@ python-check:
 web-check:
 	node --check control-plane/static/app.js
 	bash -n bridge/start-real.sh
+	bash -n bridge/start-ominix-asr.sh

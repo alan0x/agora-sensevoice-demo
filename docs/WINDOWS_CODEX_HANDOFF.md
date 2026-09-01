@@ -11,13 +11,13 @@ Browser + Agora Web SDK
       Agora SD-RTN
           │ 16 kHz mono PCM
           ▼
-当前 Mac：Agora Bridge → 本机 SenseVoice :8094
+当前 Mac：Agora Bridge → 本机 OminiX Qwen3-ASR :8080
           │ outbound WSS / real ASR text
           ▼
 VPS：Rust + Salvo control-plane → Browser
 ```
 
-- 当前 Mac：运行真实 Bridge 和 SenseVoice。
+- 当前 Mac：运行真实 Bridge 和 OminiX Qwen3-ASR。
 - Windows：只构建 Linux 控制面镜像、制作离线包、上传 VPS。
 - VPS：只运行 Rust + Salvo `control-plane`。
 - 浏览器必须使用 HTTPS；麦克风音频只走 Agora，VPS 不承载音频或推理。
@@ -27,8 +27,8 @@ VPS：Rust + Salvo control-plane → Browser
 
 - GitHub：`https://github.com/alan0x/agora-sensevoice-demo`（private），默认分支 `main`。
 - 当前 Mac 是 Apple Silicon，Python 3.13 已成功加载 `agora-python-server-sdk==2.4.9`。
-- Bridge 已按当前 SenseVoice 的 JSON + base64 协议适配。
-- `127.0.0.1:8094` 的真实 SenseVoice 已用 16 kHz 单声道 WAV 验证，返回“你好，小章鱼。”。
+- Bridge 已按当前 OminiX-API 的 JSON + base64 协议适配。
+- `127.0.0.1:8080` 的 OminiX Qwen3-ASR 已用 16 kHz 单声道 WAV 验证，返回“你好，小章鱼。”。
 - VPS 唯一需要的镜像：`agora-sensevoice-control-plane:demo`。
 
 ## 3. Windows 前置检查
@@ -212,7 +212,7 @@ bash start-real.sh
 pip install -r requirements.txt
 ```
 
-需要单独确认 SenseVoice 时，使用真实音频，而不是 mock：
+需要单独确认 OminiX ASR 时，使用真实音频，而不是 mock：
 
 ```bash
 python smoke_sensevoice_live.py /path/to/16k-mono.wav
@@ -224,9 +224,9 @@ python smoke_sensevoice_live.py /path/to/16k-mono.wav
 2. `/api/v1/status` 显示 `bridgeOnline=true`、`demoMode=false`。
 3. 浏览器页面显示 `REAL 真实链路`，点击“开始识别”并允许麦克风。
 4. 当前 Mac Bridge 日志显示 Agora 已连接和浏览器 UID 已入会。
-5. 对麦克风说一句临时内容，页面出现与该内容一致的 SenseVoice final 文本。
+5. 对麦克风说一句临时内容，页面出现与该内容一致的 OminiX Qwen3-ASR final 文本。
 6. 再测试“立即断句”、静音/恢复和结束会话。
-7. 浏览器网络请求中没有任何内网 SenseVoice 地址。
+7. 浏览器网络请求中没有任何内网 ASR 地址。
 
 预设模拟文本、`demoMode=true` 或 mock Bridge 在线都不算通过。
 
@@ -238,7 +238,7 @@ python smoke_sensevoice_live.py /path/to/16k-mono.wav
 | `bridgeOnline=false` | Mac Bridge 是否运行、secret 是否一致、Nginx WSS Upgrade |
 | 浏览器无麦克风 | 是否 HTTPS、浏览器权限是否允许 |
 | Agora join 失败 | Token 是否过期；channel、UID、App ID 是否严格一致 |
-| Bridge 在线但无文本 | `curl 127.0.0.1:8094/health`；Bridge 日志；SenseVoice URL/protocol |
+| Bridge 在线但无文本 | `curl 127.0.0.1:8080/health`；Bridge 日志；ASR URL/protocol |
 | VPS 尝试编译 | 是否遗漏 `--no-build`；镜像 tag 是否为 `agora-sensevoice-control-plane:demo` |
 
 若失败，先保存以下输出再改代码：
@@ -251,7 +251,7 @@ docker image inspect agora-sensevoice-control-plane:demo
 
 ## 13. 给下一位 Codex 的提交要求
 
-1. 不改变“Mac 跑 Bridge + SenseVoice、VPS 只跑控制面”的边界。
+1. 不改变“Mac 跑 Bridge + OminiX ASR、VPS 只跑控制面”的边界。
 2. 不要求用户先构建、运行或验收 mock。
 3. 不提交 `.env`、App Certificate、RTC Token 或 secret。
 4. 修改仓库后运行 `make check`，提交并推送 GitHub，保证当前 Mac 可同步。

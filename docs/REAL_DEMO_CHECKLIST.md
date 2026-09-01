@@ -1,4 +1,4 @@
-# Real Agora + SenseVoice checklist
+# Real Agora + OminiX ASR checklist
 
 ## Agora console
 
@@ -28,6 +28,13 @@ a ready Python 3.13 virtual environment. For this demo:
 
 ```bash
 cd bridge
+bash start-ominix-asr.sh
+```
+
+Keep that terminal running. In a second terminal:
+
+```bash
+cd bridge
 cp .env.example .env
 # Set CONTROL_WS_URL and BRIDGE_SHARED_SECRET in .env.
 bash start-real.sh
@@ -36,7 +43,7 @@ bash start-real.sh
 Agora documents macOS as a coding/testing platform, which fits this demo. Move
 the bridge to a supported Linux host before production use.
 
-The adapter already matches the running SenseVoice JSON/base64 contract. Before
+The adapter already matches the running OminiX JSON/base64 contract. Before
 joining Agora, it can be checked with a real 16 kHz mono WAV file:
 
 ```bash
