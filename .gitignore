@@ -1,0 +1,10 @@
+.DS_Store
+.env
+deploy/.env
+target/
+control-plane/target/
+__pycache__/
+*.py[cod]
+.venv/
+agora_rtc_log/
+*.log
