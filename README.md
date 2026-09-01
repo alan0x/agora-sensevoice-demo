@@ -69,6 +69,8 @@ docker compose --env-file deploy/.env -f deploy/docker-compose.yml --profile moc
 
 完整操作清单见 [`docs/REAL_DEMO_CHECKLIST.md`](docs/REAL_DEMO_CHECKLIST.md)。如果现有 SenseVoice HTTP 接口不是 OpenAI-compatible multipart 格式，只需要修改 `bridge/bridge/sensevoice.py`。
 
+如果在 Windows + Docker Desktop 上交叉构建 Linux 镜像、制作离线包并上传 VPS，请直接交给下一位 Codex 阅读 [`docs/WINDOWS_CODEX_HANDOFF.md`](docs/WINDOWS_CODEX_HANDOFF.md)。该文档明确保持“当前电脑运行 SenseVoice/真实 Bridge，VPS 只运行控制面”的最终边界。
+
 ## 项目布局
 
 ```text

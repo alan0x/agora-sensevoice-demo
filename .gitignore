@@ -8,3 +8,4 @@ __pycache__/
 .venv/
 agora_rtc_log/
 *.log
+artifacts/
