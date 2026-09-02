@@ -1,6 +1,6 @@
-# Windows Codex 交接：构建真实 Demo 的 VPS 镜像并上传
+# Windows Codex 交接：构建生产版 VPS 控制面并上传
 
-> 给 Windows 机器上的下一位 Codex/开发者：先完整阅读本文和仓库根目录 `README.md`。不要把 mock 当成构建、验收或演示步骤。
+> 当前生产迁移以 `docs/PRODUCTION_RUNBOOK.md` 为准。领导认可的旧 Demo 已冻结为 `demo-approved-2026-09-01`；不要在该标签继续开发，也不要把 mock 当成部署或验收步骤。
 
 ## 1. 固定部署边界
 
@@ -29,7 +29,7 @@ VPS：Rust + Salvo control-plane → Browser
 - 当前 Mac 是 Apple Silicon，Python 3.13 已成功加载 `agora-python-server-sdk==2.4.9`。
 - Bridge 已按当前 OminiX-API 的 JSON + base64 协议适配。
 - `127.0.0.1:8080` 的 OminiX Qwen3-ASR 已用 16 kHz 单声道 WAV 验证，返回“你好，小章鱼。”。
-- VPS 唯一需要的镜像：`agora-sensevoice-control-plane:demo`。
+- VPS 唯一需要的新镜像：`agora-ominix-control-plane:production`。
 
 ## 3. Windows 前置检查
 
@@ -50,6 +50,8 @@ Set-Location C:\src
 gh repo clone alan0x/agora-sensevoice-demo
 Set-Location agora-sensevoice-demo
 git status --short --branch
+git switch codex/production-foundation
+git pull --ff-only
 ```
 
 ## 4. 查 VPS 架构并设置变量
@@ -68,8 +70,8 @@ ssh <VPS_USER>@<VPS_HOST> "uname -m"
 ```powershell
 $Platform = "linux/amd64"
 $ArchLabel = "linux-amd64"
-$ControlImage = "agora-sensevoice-control-plane:demo"
-$ControlTar = "artifacts\agora-sensevoice-control-plane-$ArchLabel.tar"
+$ControlImage = "agora-ominix-control-plane:production"
+$ControlTar = "artifacts\agora-ominix-control-plane-$ArchLabel.tar"
 New-Item -ItemType Directory -Force artifacts | Out-Null
 docker buildx inspect --bootstrap
 ```
@@ -94,10 +96,10 @@ docker image inspect $ControlImage --format '{{.Os}}/{{.Architecture}}'
 ```powershell
 docker save --output $ControlTar $ControlImage
 git archive --format=zip `
-  --output="artifacts\agora-sensevoice-demo-deploy.zip" `
+  --output="artifacts\agora-ominix-production.zip" `
   HEAD
 
-Get-FileHash $ControlTar, artifacts\agora-sensevoice-demo-deploy.zip `
+Get-FileHash $ControlTar, artifacts\agora-ominix-production.zip `
   -Algorithm SHA256 | Format-Table Algorithm, Hash, Path -AutoSize
 ```
 
@@ -111,7 +113,7 @@ ssh <VPS_USER>@<VPS_HOST> "mkdir -p ~/agora-sensevoice-upload"
 scp $ControlTar `
   <VPS_USER>@<VPS_HOST>:~/agora-sensevoice-upload/
 
-scp artifacts\agora-sensevoice-demo-deploy.zip `
+scp artifacts\agora-ominix-production.zip `
   <VPS_USER>@<VPS_HOST>:~/agora-sensevoice-upload/
 ```
 
@@ -122,8 +124,8 @@ SSH 登录 VPS：
 ```bash
 cd ~/agora-sensevoice-upload
 sha256sum *.tar *.zip
-docker load --input agora-sensevoice-control-plane-linux-amd64.tar
-unzip -q agora-sensevoice-demo-deploy.zip -d app
+docker load --input agora-ominix-control-plane-linux-amd64.tar
+unzip -q agora-ominix-production.zip -d app
 cd app
 cp deploy/.env.example deploy/.env
 ```
@@ -135,17 +137,18 @@ PUBLIC_BASE_URL=https://<ASR_SUBDOMAIN>
 ALLOWED_ORIGIN=https://<ASR_SUBDOMAIN>
 CONTROL_PLANE_PORT=18080
 BRIDGE_SHARED_SECRET=<RANDOM_SECRET_SHARED_WITH_CURRENT_MAC>
+CLIENT_ACCESS_TOKEN=<DIFFERENT_RANDOM_SECRET_FOR_AUTHORIZED_USERS>
 SESSION_TTL_SECONDS=900
 DEMO_MODE=false
 AGORA_APP_ID=<APP_ID>
-DEMO_CHANNEL=sensevoice-demo
-DEMO_CLIENT_UID=1001
-DEMO_BRIDGE_UID=9001
-DEMO_CLIENT_RTC_TOKEN=<TEMP_BROWSER_TOKEN>
-DEMO_BRIDGE_RTC_TOKEN=<TEMP_BRIDGE_TOKEN>
+AGORA_APP_CERTIFICATE=<APP_CERTIFICATE>
+RTC_CHANNEL_PREFIX=asr
+RTC_CLIENT_UID=1001
+RTC_BRIDGE_UID=9001
+RTC_TOKEN_TTL_SECONDS=1200
 ```
 
-两个 Token 必须属于相同 App ID、相同频道 `sensevoice-demo`，并分别绑定 UID `1001`、`9001`。不要把 App Certificate 放到 VPS 或浏览器。
+生产版不再手工配置固定 RTC Token。App Certificate 只保存在 VPS 的 `deploy/.env`/secret 管理中，用于动态签发短期 Token；严禁放进镜像、浏览器、Mac Bridge 或 Git。
 
 本 VPS 的现有 Nginx 运行在 Docker 中，并使用外部网络
 `shared_network`。首次启动前确认该网络存在：
@@ -221,8 +224,8 @@ python smoke_sensevoice_live.py /path/to/16k-mono.wav
 ## 11. 最终验收（全部必须通过）
 
 1. `https://<ASR_SUBDOMAIN>/healthz` 返回 `ok`。
-2. `/api/v1/status` 显示 `bridgeOnline=true`、`demoMode=false`。
-3. 浏览器页面显示 `REAL 真实链路`，点击“开始识别”并允许麦克风。
+2. `/api/v1/status` 显示 `bridgeOnline=true`、`demoMode=false`、`accessProtected=true`、`capacity=1`。
+3. 浏览器页面显示 `REAL 真实链路`，输入 `CLIENT_ACCESS_TOKEN`，点击“开始识别”并允许麦克风。
 4. 当前 Mac Bridge 日志显示 Agora 已连接和浏览器 UID 已入会。
 5. 对麦克风说一句临时内容，页面出现与该内容一致的 OminiX Qwen3-ASR final 文本。
 6. 再测试“立即断句”、静音/恢复和结束会话。
@@ -237,16 +240,16 @@ python smoke_sensevoice_live.py /path/to/16k-mono.wav
 | VPS `exec format error` | 镜像平台与 `uname -m` 不一致 |
 | `bridgeOnline=false` | Mac Bridge 是否运行、secret 是否一致、Nginx WSS Upgrade |
 | 浏览器无麦克风 | 是否 HTTPS、浏览器权限是否允许 |
-| Agora join 失败 | Token 是否过期；channel、UID、App ID 是否严格一致 |
+| Agora join 失败 | VPS App ID/Certificate 是否正确；系统时间、动态 Token TTL、UID 是否有效 |
 | Bridge 在线但无文本 | `curl 127.0.0.1:8080/health`；Bridge 日志；ASR URL/protocol |
-| VPS 尝试编译 | 是否遗漏 `--no-build`；镜像 tag 是否为 `agora-sensevoice-control-plane:demo` |
+| VPS 尝试编译 | 是否遗漏 `--no-build`；镜像 tag 是否为 `agora-ominix-control-plane:production` |
 
 若失败，先保存以下输出再改代码：
 
 ```bash
 docker compose --env-file deploy/.env -f deploy/docker-compose.yml ps
 docker compose --env-file deploy/.env -f deploy/docker-compose.yml logs --tail=200
-docker image inspect agora-sensevoice-control-plane:demo
+docker image inspect agora-ominix-control-plane:production
 ```
 
 ## 13. 给下一位 Codex 的提交要求

@@ -1,3 +1,5 @@
+mod agora_token;
+
 use std::{
     collections::HashMap,
     env,
@@ -9,16 +11,22 @@ use std::{
 };
 
 use salvo::{
-    http::{HeaderValue, StatusCode, header},
+    http::{
+        HeaderName, HeaderValue, StatusCode,
+        cookie::{Cookie, SameSite, time::Duration as CookieDuration},
+        header,
+    },
     prelude::*,
     serve_static::StaticDir,
     websocket::{Message, WebSocket, WebSocketUpgrade},
 };
-use serde::Serialize;
 use serde_json::{Value, json};
+use subtle::ConstantTimeEq;
 use tokio::sync::{Mutex, mpsc};
 use tracing::{error, info, warn};
 use uuid::Uuid;
+
+use crate::agora_token::{RtcRole, build_rtc_token, validate_credential};
 
 static APP_STATE: OnceLock<Arc<AppState>> = OnceLock::new();
 
@@ -29,11 +37,12 @@ struct Config {
     public_base_url: String,
     allowed_origin: Option<String>,
     agora_app_id: String,
-    channel: String,
+    agora_app_certificate: String,
+    channel_prefix: String,
     client_uid: u32,
     bridge_uid: u32,
-    client_rtc_token: String,
-    bridge_rtc_token: String,
+    rtc_token_ttl_seconds: u32,
+    client_access_token: String,
     bridge_shared_secret: String,
     session_ttl_seconds: u64,
     demo_mode: bool,
@@ -52,11 +61,12 @@ impl Config {
                 .ok()
                 .filter(|value| !value.trim().is_empty()),
             agora_app_id: env::var("AGORA_APP_ID").unwrap_or_default(),
-            channel: env_or("DEMO_CHANNEL", "sensevoice-demo"),
-            client_uid: env_u32("DEMO_CLIENT_UID", 1001)?,
-            bridge_uid: env_u32("DEMO_BRIDGE_UID", 9001)?,
-            client_rtc_token: env::var("DEMO_CLIENT_RTC_TOKEN").unwrap_or_default(),
-            bridge_rtc_token: env::var("DEMO_BRIDGE_RTC_TOKEN").unwrap_or_default(),
+            agora_app_certificate: env::var("AGORA_APP_CERTIFICATE").unwrap_or_default(),
+            channel_prefix: env_or("RTC_CHANNEL_PREFIX", "asr"),
+            client_uid: env_u32("RTC_CLIENT_UID", 1001)?,
+            bridge_uid: env_u32("RTC_BRIDGE_UID", 9001)?,
+            rtc_token_ttl_seconds: env_u32("RTC_TOKEN_TTL_SECONDS", 1200)?,
+            client_access_token: env::var("CLIENT_ACCESS_TOKEN").unwrap_or_default(),
             bridge_shared_secret: env::var("BRIDGE_SHARED_SECRET").unwrap_or_default(),
             session_ttl_seconds: env_u64("SESSION_TTL_SECONDS", 900)?,
             demo_mode,
@@ -69,19 +79,61 @@ impl Config {
         if self.bridge_shared_secret.len() < 16 {
             return Err("BRIDGE_SHARED_SECRET must contain at least 16 characters".into());
         }
+        if self.session_ttl_seconds == 0 || self.session_ttl_seconds > 3_600 {
+            return Err("SESSION_TTL_SECONDS must be between 1 and 3600".into());
+        }
+        if self.rtc_token_ttl_seconds > 86_400
+            || u64::from(self.rtc_token_ttl_seconds) < self.session_ttl_seconds + 60
+        {
+            return Err(
+                "RTC_TOKEN_TTL_SECONDS must cover SESSION_TTL_SECONDS plus 60 seconds and not exceed 86400"
+                    .into(),
+            );
+        }
+        if self.channel_prefix.is_empty()
+            || self.channel_prefix.len() > 24
+            || !self
+                .channel_prefix
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+        {
+            return Err(
+                "RTC_CHANNEL_PREFIX must contain 1-24 ASCII letters, digits, '-' or '_'".into(),
+            );
+        }
         if !self.demo_mode {
-            for (name, value) in [
-                ("AGORA_APP_ID", &self.agora_app_id),
-                ("DEMO_CLIENT_RTC_TOKEN", &self.client_rtc_token),
-                ("DEMO_BRIDGE_RTC_TOKEN", &self.bridge_rtc_token),
-            ] {
-                if value.trim().is_empty() {
-                    return Err(format!("{name} is required when DEMO_MODE=false"));
-                }
+            validate_credential("AGORA_APP_ID", &self.agora_app_id)?;
+            validate_credential("AGORA_APP_CERTIFICATE", &self.agora_app_certificate)?;
+            if self.client_access_token.len() < 24 {
+                return Err(
+                    "CLIENT_ACCESS_TOKEN must contain at least 24 characters when DEMO_MODE=false"
+                        .into(),
+                );
+            }
+            if self.bridge_shared_secret.len() < 24 {
+                return Err(
+                    "BRIDGE_SHARED_SECRET must contain at least 24 characters when DEMO_MODE=false"
+                        .into(),
+                );
+            }
+            if secret_matches(&self.client_access_token, &self.bridge_shared_secret) {
+                return Err("CLIENT_ACCESS_TOKEN and BRIDGE_SHARED_SECRET must be different".into());
+            }
+            if !self.public_base_url.starts_with("https://") {
+                return Err("PUBLIC_BASE_URL must use HTTPS when DEMO_MODE=false".into());
+            }
+            if self.allowed_origin.as_deref() != Some(self.public_base_url.as_str()) {
+                return Err(
+                    "ALLOWED_ORIGIN must exactly match PUBLIC_BASE_URL when DEMO_MODE=false"
+                        .into(),
+                );
             }
         }
+        if self.client_uid == 0 || self.bridge_uid == 0 {
+            return Err("RTC_CLIENT_UID and RTC_BRIDGE_UID must be non-zero".into());
+        }
         if self.client_uid == self.bridge_uid {
-            return Err("DEMO_CLIENT_UID and DEMO_BRIDGE_UID must be different".into());
+            return Err("RTC_CLIENT_UID and RTC_BRIDGE_UID must be different".into());
         }
         Ok(())
     }
@@ -118,8 +170,7 @@ fn env_u64(name: &str, default: u64) -> Result<u64, String> {
     }
 }
 
-#[derive(Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone)]
 struct Session {
     id: String,
     ticket: String,
@@ -127,7 +178,6 @@ struct Session {
     client_uid: u32,
     bridge_uid: u32,
     state: String,
-    created_at_ms: u64,
     expires_at_ms: u64,
 }
 
@@ -210,9 +260,72 @@ fn render_error(res: &mut Response, status_code: StatusCode, code: &str, message
     ));
 }
 
+fn secret_matches(expected: &str, supplied: &str) -> bool {
+    expected.len() == supplied.len() && bool::from(expected.as_bytes().ct_eq(supplied.as_bytes()))
+}
+
+fn bearer_token(req: &Request) -> Option<&str> {
+    req.headers()
+        .get(header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("Bearer "))
+}
+
+fn client_authorized(req: &Request, config: &Config) -> bool {
+    if config.demo_mode && config.client_access_token.is_empty() {
+        return true;
+    }
+    bearer_token(req).is_some_and(|value| secret_matches(&config.client_access_token, value))
+}
+
+fn require_client_access(req: &Request, res: &mut Response) -> bool {
+    if client_authorized(req, &state().config) {
+        true
+    } else {
+        res.headers_mut().insert(
+            header::WWW_AUTHENTICATE,
+            HeaderValue::from_static("Bearer realm=\"asr-session\""),
+        );
+        render_error(
+            res,
+            StatusCode::UNAUTHORIZED,
+            "unauthorized",
+            "Invalid client access token",
+        );
+        false
+    }
+}
+
+fn session_cookie(session: &Session, config: &Config) -> Cookie<'static> {
+    Cookie::build(("asr_session", session.ticket.clone()))
+        .path(format!("/ws/client/{}", session.id))
+        .http_only(true)
+        .secure(config.public_base_url.starts_with("https://"))
+        .same_site(SameSite::Strict)
+        .max_age(CookieDuration::seconds(
+            config.session_ttl_seconds.try_into().unwrap_or(i64::MAX),
+        ))
+        .build()
+}
+
 #[handler]
 async fn healthz(res: &mut Response) {
     res.render(Text::Plain("ok"));
+}
+
+#[handler]
+async fn readyz(res: &mut Response) {
+    let inner = state().inner.lock().await;
+    if inner.bridge.is_some() {
+        res.render(Text::Plain("ready"));
+    } else {
+        render_error(
+            res,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "bridge_offline",
+            "The LAN bridge is not connected",
+        );
+    }
 }
 
 #[handler]
@@ -223,18 +336,23 @@ async fn status(res: &mut Response) {
         .sessions
         .values()
         .find(|session| session.state != "closed")
-        .map(|session| json!({ "id": session.id, "state": session.state }));
+        .map(|session| json!({ "state": session.state }));
     res.render(Json(json!({
-        "service": "agora-sensevoice-control-plane",
+        "service": "agora-ominix-control-plane",
         "bridgeOnline": inner.bridge.is_some(),
         "demoMode": app.config.demo_mode,
+        "accessProtected": !app.config.client_access_token.is_empty(),
+        "capacity": 1,
         "activeSession": active_session,
     })));
 }
 
 #[handler]
-async fn create_session(res: &mut Response) {
+async fn create_session(req: &mut Request, res: &mut Response) {
     let app = state();
+    if !require_client_access(req, res) {
+        return;
+    }
     let mut inner = app.inner.lock().await;
 
     if inner.bridge.is_none() {
@@ -255,20 +373,66 @@ async fn create_session(res: &mut Response) {
             res,
             StatusCode::CONFLICT,
             "session_busy",
-            "This demo supports one active session at a time",
+            "The ASR worker is at its single-session capacity",
         );
         return;
     }
 
     let now = unix_ms();
+    let id = Uuid::new_v4().to_string();
+    let channel = format!("{}-{}", app.config.channel_prefix, Uuid::new_v4().simple());
+    let (client_rtc_token, bridge_rtc_token) = if app.config.demo_mode {
+        (String::new(), String::new())
+    } else {
+        let client = match build_rtc_token(
+            &app.config.agora_app_id,
+            &app.config.agora_app_certificate,
+            &channel,
+            app.config.client_uid,
+            RtcRole::AudioPublisher,
+            app.config.rtc_token_ttl_seconds,
+        ) {
+            Ok(token) => token,
+            Err(error) => {
+                error!(%error, "failed to create client RTC token");
+                render_error(
+                    res,
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "token_generation_failed",
+                    "Could not issue RTC credentials",
+                );
+                return;
+            }
+        };
+        let bridge = match build_rtc_token(
+            &app.config.agora_app_id,
+            &app.config.agora_app_certificate,
+            &channel,
+            app.config.bridge_uid,
+            RtcRole::Subscriber,
+            app.config.rtc_token_ttl_seconds,
+        ) {
+            Ok(token) => token,
+            Err(error) => {
+                error!(%error, "failed to create bridge RTC token");
+                render_error(
+                    res,
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "token_generation_failed",
+                    "Could not issue RTC credentials",
+                );
+                return;
+            }
+        };
+        (client, bridge)
+    };
     let session = Session {
-        id: Uuid::new_v4().to_string(),
+        id,
         ticket: Uuid::new_v4().to_string(),
-        channel: app.config.channel.clone(),
+        channel,
         client_uid: app.config.client_uid,
         bridge_uid: app.config.bridge_uid,
         state: "starting".into(),
-        created_at_ms: now,
         expires_at_ms: now + app.config.session_ttl_seconds * 1000,
     };
 
@@ -279,7 +443,7 @@ async fn create_session(res: &mut Response) {
             "appId": app.config.agora_app_id,
             "channel": session.channel,
             "uid": session.bridge_uid,
-            "token": app.config.bridge_rtc_token,
+            "token": bridge_rtc_token,
         }
     });
     let bridge_sent = inner
@@ -299,31 +463,38 @@ async fn create_session(res: &mut Response) {
 
     let response = json!({
         "sessionId": session.id,
-        "ticket": session.ticket,
         "state": session.state,
         "expiresAtMs": session.expires_at_ms,
-        "eventsWsPath": format!("/ws/client/{}?ticket={}", session.id, session.ticket),
+        "eventsWsPath": format!("/ws/client/{}", session.id),
         "demoMode": app.config.demo_mode,
         "agora": {
             "appId": app.config.agora_app_id,
             "channel": session.channel,
             "uid": session.client_uid,
-            "token": app.config.client_rtc_token,
+            "token": client_rtc_token,
         }
     });
+    let cookie = session_cookie(&session, &app.config);
     info!(session_id = %session.id, "session created");
     inner.sessions.insert(session.id.clone(), session);
+    res.add_cookie(cookie);
     res.status_code(StatusCode::CREATED);
     res.render(Json(response));
 }
 
 #[handler]
 async fn commit_utterance(req: &mut Request, res: &mut Response) {
+    if !require_client_access(req, res) {
+        return;
+    }
     forward_session_command(req, res, "utterance.commit").await;
 }
 
 #[handler]
 async fn delete_session(req: &mut Request, res: &mut Response) {
+    if !require_client_access(req, res) {
+        return;
+    }
     let Some(id) = req.param::<String>("id") else {
         render_error(
             res,
@@ -411,12 +582,8 @@ fn origin_allowed(req: &Request, config: &Config) -> bool {
 #[handler]
 async fn bridge_ws(req: &mut Request, res: &mut Response) {
     let app = state().clone();
-    let expected = format!("Bearer {}", app.config.bridge_shared_secret);
-    let authorized = req
-        .headers()
-        .get(header::AUTHORIZATION)
-        .and_then(|value| value.to_str().ok())
-        .is_some_and(|value| value == expected);
+    let authorized = bearer_token(req)
+        .is_some_and(|value| secret_matches(&app.config.bridge_shared_secret, value));
     if !authorized {
         render_error(
             res,
@@ -478,12 +645,37 @@ async fn bridge_socket(mut socket: WebSocket, app: Arc<AppState>) {
     }
 
     let mut inner = app.inner.lock().await;
-    if inner
+    let disconnected_current = inner
         .bridge
         .as_ref()
-        .is_some_and(|link| link.id == socket_id)
-    {
+        .is_some_and(|link| link.id == socket_id);
+    if disconnected_current {
         inner.bridge = None;
+        let active_ids: Vec<String> = inner
+            .sessions
+            .values_mut()
+            .filter(|session| session.state != "closed")
+            .map(|session| {
+                session.state = "closed".into();
+                session.id.clone()
+            })
+            .collect();
+        for session_id in active_ids {
+            if let Some(client) = inner.clients.remove(&session_id) {
+                send_json(
+                    &client.tx,
+                    &json!({
+                        "type": "asr.error",
+                        "sessionId": session_id,
+                        "message": "内网 Bridge 连接中断",
+                    }),
+                );
+                send_json(
+                    &client.tx,
+                    &json!({ "type": "session.closed", "sessionId": session_id }),
+                );
+            }
+        }
     }
     info!(bridge_connection = %socket_id, "bridge disconnected");
 }
@@ -545,7 +737,10 @@ async fn client_ws(req: &mut Request, res: &mut Response) {
         );
         return;
     };
-    let ticket = req.query::<String>("ticket").unwrap_or_default();
+    let ticket = req
+        .cookie("asr_session")
+        .map(|cookie| cookie.value().to_owned())
+        .unwrap_or_default();
     {
         let inner = app.inner.lock().await;
         let valid = inner
@@ -578,11 +773,14 @@ async fn client_socket(mut socket: WebSocket, app: Arc<AppState>, session_id: St
     let (tx, mut rx) = mpsc::unbounded_channel();
     {
         let mut inner = app.inner.lock().await;
-        let state_value = inner
+        let Some(state_value) = inner
             .sessions
             .get(&session_id)
+            .filter(|session| session.state != "closed")
             .map(|session| session.state.clone())
-            .unwrap_or_else(|| "closed".into());
+        else {
+            return;
+        };
         send_json(
             &tx,
             &json!({
@@ -625,6 +823,59 @@ async fn client_socket(mut socket: WebSocket, app: Arc<AppState>, session_id: St
     {
         inner.clients.remove(&session_id);
     }
+    let should_stop = inner.sessions.get_mut(&session_id).is_some_and(|session| {
+        if session.state == "closed" {
+            false
+        } else {
+            session.state = "closed".into();
+            true
+        }
+    });
+    if should_stop {
+        if let Some(bridge) = &inner.bridge {
+            send_json(
+                &bridge.tx,
+                &json!({ "type": "session.stop", "sessionId": session_id }),
+            );
+        }
+        info!(session_id, "session stopped after client disconnect");
+    }
+}
+
+async fn session_reaper(app: Arc<AppState>) {
+    let mut interval = tokio::time::interval(std::time::Duration::from_secs(15));
+    loop {
+        interval.tick().await;
+        let now = unix_ms();
+        let mut inner = app.inner.lock().await;
+        let expired_ids: Vec<String> = inner
+            .sessions
+            .values_mut()
+            .filter(|session| session.state != "closed" && session.expires_at_ms <= now)
+            .map(|session| {
+                session.state = "closed".into();
+                session.id.clone()
+            })
+            .collect();
+        for session_id in &expired_ids {
+            if let Some(bridge) = &inner.bridge {
+                send_json(
+                    &bridge.tx,
+                    &json!({ "type": "session.stop", "sessionId": session_id }),
+                );
+            }
+            if let Some(client) = inner.clients.remove(session_id) {
+                send_json(
+                    &client.tx,
+                    &json!({ "type": "session.expired", "sessionId": session_id }),
+                );
+            }
+            info!(session_id, "expired session stopped");
+        }
+        inner.sessions.retain(|_, session| {
+            session.state != "closed" || session.expires_at_ms.saturating_add(60_000) > now
+        });
+    }
 }
 
 #[handler]
@@ -645,6 +896,17 @@ async fn security_headers(
         HeaderValue::from_static("same-origin"),
     );
     headers.insert(header::X_FRAME_OPTIONS, HeaderValue::from_static("DENY"));
+    headers.insert(
+        header::CONTENT_SECURITY_POLICY,
+        HeaderValue::from_static(
+            "default-src 'self'; script-src 'self' https://download.agora.io; style-src 'self'; connect-src 'self' https: wss:; worker-src 'self' blob:; media-src 'self' blob:; img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'",
+        ),
+    );
+    headers.insert(
+        HeaderName::from_static("permissions-policy"),
+        HeaderValue::from_static("microphone=(self), camera=(), geolocation=()"),
+    );
+    headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
 }
 
 #[tokio::main]
@@ -678,6 +940,7 @@ async fn main() {
     APP_STATE
         .set(Arc::new(AppState::new(config)))
         .unwrap_or_else(|_| panic!("application state already initialized"));
+    tokio::spawn(session_reaper(state().clone()));
 
     let api = Router::with_path("api/v1")
         .push(Router::with_path("status").get(status))
@@ -692,6 +955,7 @@ async fn main() {
         .hoop(CatchPanic::new())
         .hoop(security_headers)
         .push(Router::with_path("healthz").get(healthz))
+        .push(Router::with_path("readyz").get(readyz))
         .push(api)
         .push(Router::with_path("ws/bridge").get(bridge_ws))
         .push(Router::with_path("ws/client/{id}").get(client_ws))
@@ -714,11 +978,12 @@ mod tests {
             public_base_url: "http://localhost".into(),
             allowed_origin: None,
             agora_app_id: String::new(),
-            channel: "demo".into(),
+            agora_app_certificate: String::new(),
+            channel_prefix: "test".into(),
             client_uid: 1001,
             bridge_uid: 9001,
-            client_rtc_token: String::new(),
-            bridge_rtc_token: String::new(),
+            rtc_token_ttl_seconds: 1200,
+            client_access_token: String::new(),
             bridge_shared_secret: "0123456789abcdef".into(),
             session_ttl_seconds: 900,
             demo_mode: true,
@@ -735,6 +1000,32 @@ mod tests {
         let mut config = base_config();
         config.demo_mode = false;
         assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn real_mode_accepts_production_security_config() {
+        let mut config = base_config();
+        config.demo_mode = false;
+        config.public_base_url = "https://asr.example.com".into();
+        config.allowed_origin = Some("https://asr.example.com".into());
+        config.agora_app_id = "970CA35de60c44645bbae8a215061b33".into();
+        config.agora_app_certificate = "5CFd2fd1755d40ecb72977518be15d3b".into();
+        config.client_access_token = "client-access-token-at-least-24".into();
+        config.bridge_shared_secret = "bridge-secret-at-least-24-characters".into();
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn rtc_token_must_outlive_session() {
+        let mut config = base_config();
+        config.rtc_token_ttl_seconds = 900;
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn secrets_use_constant_time_comparison() {
+        assert!(secret_matches("same-secret", "same-secret"));
+        assert!(!secret_matches("same-secret", "other-secret"));
     }
 
     #[test]

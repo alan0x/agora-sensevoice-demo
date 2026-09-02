@@ -1,5 +1,9 @@
 # Real Agora + OminiX ASR checklist
 
+> Archived demo checklist. It applies to Git tag `demo-approved-2026-09-01` only.
+> The current production branch uses dynamic AccessToken2 credentials; follow
+> `docs/PRODUCTION_RUNBOOK.md` for deployment.
+
 ## Agora console
 
 1. Create or select an RTC project and copy its App ID and App Certificate.

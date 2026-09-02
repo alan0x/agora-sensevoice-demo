@@ -30,9 +30,15 @@ if [[ -z "${BRIDGE_SHARED_SECRET:-}" || "${BRIDGE_SHARED_SECRET}" == replace-* ]
 fi
 
 ASR_HEALTH_URL="${ASR_HEALTH_URL:-http://127.0.0.1:8080/health}"
-if ! curl --fail --silent --show-error "$ASR_HEALTH_URL" >/dev/null; then
-  echo "ASR health check failed at $ASR_HEALTH_URL." >&2
-  exit 1
-fi
+ASR_STARTUP_WAIT_SECONDS="${ASR_STARTUP_WAIT_SECONDS:-120}"
+deadline=$((SECONDS + ASR_STARTUP_WAIT_SECONDS))
+until curl --fail --silent "$ASR_HEALTH_URL" >/dev/null; do
+  if (( SECONDS >= deadline )); then
+    echo "ASR health check failed at $ASR_HEALTH_URL after ${ASR_STARTUP_WAIT_SECONDS}s." >&2
+    exit 1
+  fi
+  echo "Waiting for OminiX ASR at $ASR_HEALTH_URL..." >&2
+  sleep 2
+done
 
 exec .venv/bin/python -m bridge.main --mode real

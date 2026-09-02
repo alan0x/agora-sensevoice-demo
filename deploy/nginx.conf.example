@@ -7,6 +7,9 @@ map $http_upgrade $asr_connection_upgrade {
     ''      close;
 }
 
+# Edge abuse protection for this single-capacity service.
+limit_req_zone $binary_remote_addr zone=asr_control_per_ip:10m rate=60r/m;
+
 server {
     listen 80;
     server_name asr.pitun.cc;
@@ -24,10 +27,14 @@ server {
     ssl_certificate_key /etc/nginx/certs/asr.pitun.cc.key;
     ssl_protocols TLSv1.2 TLSv1.3;
 
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+
     client_max_body_size 64k;
+    limit_req_status 429;
     resolver 127.0.0.11 valid=10s ipv6=off;
 
     location / {
+        limit_req zone=asr_control_per_ip burst=30 nodelay;
         # Docker DNS resolves the alias again after a container replacement.
         set $asr_upstream agora-sensevoice-control-plane:8080;
         proxy_pass http://$asr_upstream;
