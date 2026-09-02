@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="color-scheme" content="dark" />
-    <title>Agora × SenseVoice 实时 ASR Demo</title>
+    <title>Agora × OminiX 实时 ASR</title>
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
@@ -14,7 +14,7 @@
       <header class="hero">
         <div>
           <p class="eyebrow">PRIVATE ASR · PUBLIC RTC</p>
-          <h1>Agora × SenseVoice</h1>
+          <h1>Agora × OminiX</h1>
           <p class="lede">浏览器只接入声网 RTC；内网桥接器拿到 PCM 后调用本地 ASR，识别结果经轻量控制面返回。</p>
         </div>
         <div id="modeBadge" class="mode-badge">检测模式…</div>
@@ -38,7 +38,7 @@
         <span class="connector"></span>
         <div class="node">
           <span class="status-dot" id="asrDot"></span>
-          <div><strong>SenseVoice</strong><small>本地推理</small></div>
+          <div><strong>Qwen3-ASR</strong><small>OminiX 本地推理</small></div>
         </div>
       </section>
 
@@ -61,7 +61,7 @@
 
         <aside class="panel control-panel">
           <p class="panel-kicker">SESSION CONTROL</p>
-          <h2>演示控制</h2>
+          <h2>会话控制</h2>
           <button id="startBtn" class="primary">开始识别</button>
           <div class="button-row">
             <button id="muteBtn" disabled>静音</button>
@@ -82,7 +82,7 @@
       </section>
 
       <footer>
-        <span>音频路径：Browser → Agora → LAN Bridge → SenseVoice</span>
+        <span>音频路径：Browser → Agora → LAN Bridge → OminiX Qwen3-ASR</span>
         <span>文本路径：LAN Bridge → VPS WebSocket → Browser</span>
       </footer>
     </main>
