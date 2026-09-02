@@ -4,7 +4,12 @@ import unittest
 
 import httpx
 
-from bridge.sensevoice import SenseVoiceClient, extract_text, pcm16_to_wav
+from bridge.sensevoice import (
+    SenseVoiceClient,
+    extract_text,
+    parse_server_timing,
+    pcm16_to_wav,
+)
 
 
 class SenseVoiceAdapterTests(unittest.TestCase):
@@ -17,6 +22,12 @@ class SenseVoiceAdapterTests(unittest.TestCase):
         payload = pcm16_to_wav(bytes(320))
         self.assertEqual(payload[:4], b"RIFF")
         self.assertIn(b"WAVE", payload[:16])
+
+    def test_parses_server_timing_durations(self):
+        self.assertEqual(
+            parse_server_timing('queue;dur=2.5, decode;dur=31, inference;dur="428.2"'),
+            {"queue": 2.5, "decode": 31.0, "inference": 428.2},
+        )
 
 
 class SenseVoiceHttpTests(unittest.IsolatedAsyncioTestCase):
@@ -39,6 +50,27 @@ class SenseVoiceHttpTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(captured["language"], "Chinese")
         self.assertEqual(captured["response_format"], "verbose_json")
         self.assertEqual(base64.b64decode(captured["file"])[:4], b"RIFF")
+
+    async def test_returns_detailed_request_timings(self):
+        def handle(request):
+            return httpx.Response(
+                200,
+                headers={"Server-Timing": "inference;dur=12.5"},
+                json={"text": "带指标的识别"},
+            )
+
+        client = SenseVoiceClient("http://sensevoice/v1/audio/transcriptions")
+        await client._client.aclose()
+        client._client = httpx.AsyncClient(transport=httpx.MockTransport(handle))
+        try:
+            result = await client.transcribe_detailed(bytes(320))
+        finally:
+            await client.close()
+
+        self.assertEqual(result.text, "带指标的识别")
+        self.assertAlmostEqual(result.audio_duration_ms, 10.0)
+        self.assertEqual(result.server_timing_ms, {"inference": 12.5})
+        self.assertGreaterEqual(result.total_ms, 0.0)
 
 
 if __name__ == "__main__":

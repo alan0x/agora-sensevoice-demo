@@ -6,6 +6,7 @@ hands them to the asyncio loop. ASR work never blocks the RTC callback.
 
 import asyncio
 import logging
+import time
 from typing import Any, Callable, Optional
 
 logger = logging.getLogger(__name__)
@@ -21,13 +22,15 @@ class AgoraReceiver:
         channel: str,
         token: str,
         uid: int,
-        on_pcm: Callable[[bytes], None],
+        on_pcm: Callable[[bytes, int], None],
+        on_network_stats: Optional[Callable[[dict], None]] = None,
     ) -> None:
         self.appid = appid
         self.channel = channel
         self.token = token
         self.uid = uid
         self.on_pcm = on_pcm
+        self.on_network_stats = on_network_stats
         self.connection: Any = None
         self._observers = []
 
@@ -44,6 +47,7 @@ class AgoraReceiver:
                 RtcConnectionPublishConfig,
             )
             from agora.rtc.audio_frame_observer import IAudioFrameObserver
+            from agora.rtc.local_user_observer import IRTCLocalUserObserver
             from agora.rtc.rtc_connection_observer import IRTCConnectionObserver
         except ImportError as exc:
             raise RuntimeError(
@@ -78,8 +82,25 @@ class AgoraReceiver:
             ):
                 pcm = bytes(audio_frame.buffer)
                 if pcm:
-                    loop.call_soon_threadsafe(receiver.on_pcm, pcm)
+                    received_ns = time.perf_counter_ns()
+                    loop.call_soon_threadsafe(receiver.on_pcm, pcm, received_ns)
                 return 1
+
+        class LocalUserObserver(IRTCLocalUserObserver):
+            def on_remote_audio_track_statistics(
+                self, agora_local_user, agora_remote_audio_track, stats
+            ):
+                if stats is None or receiver.on_network_stats is None:
+                    return
+                snapshot = {
+                    "networkTransportDelayMs": stats.network_transport_delay,
+                    "jitterBufferDelayMs": stats.jitter_buffer_delay,
+                    "audioLossRatePercent": stats.audio_loss_rate,
+                    "receivedSampleRate": stats.received_sample_rate,
+                    "receivedBitrateKbps": stats.received_bitrate,
+                    "frozenRatePercent": stats.frozen_rate,
+                }
+                loop.call_soon_threadsafe(receiver.on_network_stats, snapshot)
 
         if AgoraReceiver._service is None:
             service_config = AgoraServiceConfig()
@@ -125,7 +146,8 @@ class AgoraReceiver:
             raise RuntimeError("AgoraService.create_rtc_connection returned no connection")
         connection_observer = ConnectionObserver()
         audio_observer = AudioObserver()
-        self._observers = [connection_observer, audio_observer]
+        local_user_observer = LocalUserObserver()
+        self._observers = [connection_observer, audio_observer, local_user_observer]
         self.connection = connection
 
         result = connection.register_observer(connection_observer)
@@ -136,6 +158,10 @@ class AgoraReceiver:
         if local_user is None:
             self.stop()
             raise RuntimeError("Agora connection did not provide a local user")
+        result = connection.register_local_user_observer(local_user_observer)
+        if isinstance(result, int) and result < 0:
+            self.stop()
+            raise RuntimeError("Agora local user observer registration failed: " + str(result))
         result = local_user.set_playback_audio_frame_before_mixing_parameters(1, 16_000)
         if isinstance(result, int) and result < 0:
             self.stop()
