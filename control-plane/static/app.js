@@ -47,6 +47,7 @@ const runtime = {
   traces: new Map(),
   firstPartialMs: new Map(),
   networkQuality: null,
+  manualCommitAt: null,
 };
 
 ui.accessKey.value = runtime.accessToken;
@@ -192,6 +193,36 @@ function traceFor(event) {
   return trace;
 }
 
+function updateDerivedMetrics(trace) {
+  if (!trace) return null;
+  const metrics = trace.metrics || {};
+  const bridge = metrics.bridge || {};
+  const endpointMs = asFiniteNumber(bridge.endpointMs);
+  const asrTotalMs = asFiniteNumber(bridge.asrTotalMs);
+  if (endpointMs === null || asrTotalMs === null) return trace;
+
+  const optionalComponents = [
+    metrics.agora?.networkTransportDelayMs,
+    metrics.agora?.jitterBufferDelayMs,
+    bridge.audioQueueMs,
+    bridge.resultWebSocketSendMs,
+    metrics.vps?.relayQueueMs,
+    metrics.delivery?.estimatedVpsToBrowserMs,
+    metrics.browser?.renderMs,
+  ];
+  const estimatedEndToEndMs = optionalComponents.reduce(
+    (total, value) => total + (asFiniteNumber(value) ?? 0),
+    endpointMs + asrTotalMs,
+  );
+  mergeObjects(trace.metrics, {
+    summary: {
+      estimatedEndToEndMs: roundMetric(estimatedEndToEndMs),
+      method: "component-sum-v1",
+    },
+  });
+  return trace;
+}
+
 function sendResultAck(event) {
   const socket = runtime.socket;
   if (
@@ -237,17 +268,22 @@ function recordFinalTrace(event, receivedAt, renderMs) {
     renderMs: roundMetric(renderMs),
     speechVolumeThreshold: SPEECH_VOLUME_THRESHOLD,
     meterIntervalMs: METER_INTERVAL_MS,
+    manualCommitToFinalMs: runtime.manualCommitAt === null
+      ? null
+      : roundMetric(receivedAt - runtime.manualCommitAt),
     resultReceivedAtUnixMs: Date.now(),
   };
   mergeObjects(trace.metrics, {
     browser: browserMetrics,
     agoraClient: currentLocalAudioStats(),
   });
+  updateDerivedMetrics(trace);
   if (!trace.complete) {
     trace.complete = true;
     runtime.observations.push(trace);
   }
   runtime.speech = createSpeechState();
+  runtime.manualCommitAt = null;
   runtime.firstPartialMs.delete(event.utteranceId);
   sendResultAck(event);
   renderObservability(trace);
@@ -255,6 +291,7 @@ function recordFinalTrace(event, receivedAt, renderMs) {
 
 function applyTraceUpdate(event) {
   const trace = traceFor(event);
+  updateDerivedMetrics(trace);
   if (trace) renderObservability(trace.complete ? trace : runtime.observations.at(-1));
 }
 
@@ -277,15 +314,18 @@ function traceStages(trace) {
     ["VPS 转发排队", vps.relayQueueMs, false],
     ["VPS→浏览器（估算）", delivery.estimatedVpsToBrowserMs, true],
     ["浏览器渲染", browser.renderMs, false],
+    ["立即断句→文字", browser.manualCommitToFinalMs, false],
   ].filter(([, value]) => asFiniteNumber(value) !== null);
 }
 
 function renderObservability(preferredTrace = null) {
+  runtime.observations.forEach(updateDerivedMetrics);
+  updateDerivedMetrics(preferredTrace);
   const latest = preferredTrace || runtime.observations.at(-1) || null;
   const tails = runtime.observations
-    .map((trace) => asFiniteNumber(trace.metrics?.browser?.speechEndToFinalMs))
+    .map((trace) => asFiniteNumber(trace.metrics?.summary?.estimatedEndToEndMs))
     .filter((value) => value !== null);
-  const latestTail = asFiniteNumber(latest?.metrics?.browser?.speechEndToFinalMs);
+  const latestTail = asFiniteNumber(latest?.metrics?.summary?.estimatedEndToEndMs);
   ui.latestLatency.textContent = formatMs(latestTail);
   ui.p50Latency.textContent = formatMs(percentile(tails, 0.5));
   ui.p95Latency.textContent = formatMs(percentile(tails, 0.95));
@@ -342,7 +382,8 @@ function exportObservations() {
     measurement: {
       speechVolumeThreshold: SPEECH_VOLUME_THRESHOLD,
       meterIntervalMs: METER_INTERVAL_MS,
-      note: "Browser timing uses performance.now; network one-way latency is estimated from RTT.",
+      primaryMetric: "metrics.summary.estimatedEndToEndMs",
+      note: "Primary latency is the sum of same-utterance stages; network one-way latency is estimated from RTT. Browser volume timing is diagnostic only.",
     },
     observations: runtime.observations,
   };
@@ -516,6 +557,7 @@ async function start() {
   if (runtime.accessToken) sessionStorage.setItem("asrAccessToken", runtime.accessToken);
   ui.start.disabled = true;
   runtime.speech = createSpeechState();
+  runtime.manualCommitAt = null;
   runtime.networkQuality = null;
   setSessionState("正在启动");
   setDot(ui.agoraDot, "busy");
@@ -552,6 +594,8 @@ async function toggleMute() {
 
 async function commit() {
   if (!runtime.session) return;
+  const committedAt = performance.now();
+  runtime.manualCommitAt = committedAt;
   try {
     await api(`/api/v1/sessions/${runtime.session.sessionId}/commit`, {
       method: "POST",
@@ -559,6 +603,7 @@ async function commit() {
     });
     log("已请求立即断句");
   } catch (error) {
+    if (runtime.manualCommitAt === committedAt) runtime.manualCommitAt = null;
     log("断句请求失败", { error: error.message });
   }
 }
@@ -589,6 +634,7 @@ async function cleanupLocal() {
   runtime.muted = false;
   runtime.speech = createSpeechState();
   runtime.networkQuality = null;
+  runtime.manualCommitAt = null;
   ui.mute.textContent = "静音";
   ui.level.classList.remove("active");
   ui.levelBars.forEach((bar) => { bar.style.height = "5px"; });

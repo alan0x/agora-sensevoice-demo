@@ -104,7 +104,7 @@ python summarize_trace.py ~/Downloads/agora-asr-trace-*.json \
   --output ~/Downloads/agora-asr-latency-report.md
 ```
 
-至少汇报有效样本数、说完到最终文本 P50/P95、首个 partial P50/P95、Bridge 断句、OminiX HTTP 往返、RTF、丢包率和文字交付 ACK RTT。页面导出包含识别文本，按业务语音数据处理，不要提交到 Git。
+至少汇报有效样本数、端到端链路估算 P50/P95、“立即断句→最终文本”实测 P50/P95、首个 partial P50/P95、Bridge 断句、OminiX HTTP 往返、RTF、丢包率和文字交付 ACK RTT。客户端音量阈值估算只作诊断，不作为主延时指标。页面导出包含识别文本，按业务语音数据处理，不要提交到 Git。
 
 ## 7. 当前容量与下一阶段
 

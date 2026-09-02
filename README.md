@@ -97,9 +97,9 @@ docs/           协议与真实演示检查清单
 
 ## 延时观测与汇报
 
-页面按 `utteranceId` 关联每句话，展示用户感知延时和分段瀑布：Agora 网络传输/抖动、Bridge 断句与排队、ASR 请求准备、OminiX HTTP 往返、Bridge 结果发送、VPS 转发、文字交付 ACK 和浏览器渲染。页面同时统计有效样本的 P50/P95，并可下载原始 JSON。
+页面按 `utteranceId` 关联每句话，展示同一句各链路阶段之和的端到端估算，以及分段瀑布：Agora 网络传输/抖动、Bridge 断句与排队、OminiX 总处理、Bridge 结果发送、VPS 转发、文字交付和浏览器渲染。页面同时统计有效样本的 P50/P95，并可下载原始 JSON。
 
-浏览器的“说完到出字”由本地音量检测和 `performance.now()` 测量；Bridge/Python 与 VPS/Rust 各自用单调时钟测局部耗时。跨网络单向文字延时显示为 WebSocket ACK RTT/2 的估算值，不使用不同机器的系统时间直接相减。
+主指标不再使用浏览器音量阈值推断“说完”，避免手机 AGC/底噪导致的虚假低延时。Bridge/Python 与 VPS/Rust 各自用单调时钟测局部耗时，跨网络单向文字延时为 WebSocket ACK RTT/2 估算。需要可重复的用户体验基准时，在说完后点“立即断句”，查看“立即断句→文字”的实测值。原有客户端音量估算仅保留在导出 JSON 中作为诊断数据。
 
 下载 JSON 后生成 Markdown 汇报表：
 

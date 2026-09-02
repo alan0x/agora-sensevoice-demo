@@ -62,6 +62,7 @@ The metrics object uses process-local monotonic durations:
 - `metrics.vps`: control-plane receive/enqueue timestamps and relay queue duration.
 - `metrics.delivery`: browser ACK RTT and estimated VPS-to-browser one-way duration.
 - `metrics.browser`: speech-start/final, speech-end/final, first partial and DOM update durations.
+- `metrics.summary`: same-utterance end-to-end estimate derived by summing the available media, endpointing, ASR, result delivery and render stages. `speechEndToFinalMs` is diagnostic only.
 
 Wall-clock timestamps are diagnostic only and MUST NOT be subtracted across hosts. Raw audio never enters this protocol.
 

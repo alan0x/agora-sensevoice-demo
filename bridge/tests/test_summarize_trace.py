@@ -15,7 +15,11 @@ class TraceSummaryTests(unittest.TestCase):
                 {
                     "complete": True,
                     "metrics": {
-                        "browser": {"speechEndToFinalMs": 1000},
+                        "summary": {"estimatedEndToEndMs": 1050},
+                        "browser": {
+                            "speechEndToFinalMs": 1000,
+                            "manualCommitToFinalMs": 900,
+                        },
                         "bridge": {"endpointMs": 650, "asrTotalMs": 300},
                         "asr": {"rtf": 0.1},
                     },
@@ -23,6 +27,7 @@ class TraceSummaryTests(unittest.TestCase):
                 {
                     "complete": True,
                     "metrics": {
+                        "summary": {"estimatedEndToEndMs": 1250},
                         "browser": {"speechEndToFinalMs": 1200},
                         "bridge": {"endpointMs": 660, "asrTotalMs": 400},
                         "asr": {"rtf": 0.2},
@@ -32,7 +37,9 @@ class TraceSummaryTests(unittest.TestCase):
         }
         markdown = summarize_report(report)
         self.assertIn("最终识别样本：2", markdown)
-        self.assertIn("| 说完到最终文本 | 2 | 1100.0ms |", markdown)
+        self.assertIn("| 端到端链路估算 | 2 | 1150.0ms |", markdown)
+        self.assertIn("| 立即断句到最终文本 | 1 | 900.0ms |", markdown)
+        self.assertIn("| 客户端音量估算（仅参考） | 2 | 1100.0ms |", markdown)
         self.assertIn("| RTF | 2 | 0.150 |", markdown)
 
 
