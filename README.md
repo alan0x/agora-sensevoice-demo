@@ -2,8 +2,6 @@
 
 客户端集成 Agora Web SDK，把麦克风音频发进 RTC 频道；当前电脑上的 Bridge 以 Agora Server SDK 入会并接收 16 kHz 单声道 PCM，再调用本机 OminiX-API/Qwen3-ASR。公网 VPS 只跑 Rust + Salvo 控制面，负责鉴权、动态 Token、会话和识别文本转发，不承载音频或推理。
 
-已获领导认可的 Demo 已冻结在 Git 标签 `demo-approved-2026-09-01`；当前分支开始生产化，不会改写该基线。
-
 ## 架构
 
 ```mermaid
