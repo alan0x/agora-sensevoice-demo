@@ -10,6 +10,7 @@ use std::{
     time::{Instant, SystemTime, UNIX_EPOCH},
 };
 
+use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use salvo::{
     http::{
         HeaderName, HeaderValue, StatusCode,
@@ -20,7 +21,9 @@ use salvo::{
     serve_static::StaticDir,
     websocket::{Message, WebSocket, WebSocketUpgrade},
 };
+use serde::Deserialize;
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
 use tokio::sync::{Mutex, mpsc};
 use tracing::{error, info, warn};
@@ -43,6 +46,8 @@ struct Config {
     bridge_uid: u32,
     rtc_token_ttl_seconds: u32,
     client_access_token: String,
+    octos_service_token: String,
+    browser_grant_ttl_seconds: u64,
     bridge_shared_secret: String,
     session_ttl_seconds: u64,
     demo_mode: bool,
@@ -67,6 +72,8 @@ impl Config {
             bridge_uid: env_u32("RTC_BRIDGE_UID", 9001)?,
             rtc_token_ttl_seconds: env_u32("RTC_TOKEN_TTL_SECONDS", 1200)?,
             client_access_token: env::var("CLIENT_ACCESS_TOKEN").unwrap_or_default(),
+            octos_service_token: env::var("OCTOS_SERVICE_TOKEN").unwrap_or_default(),
+            browser_grant_ttl_seconds: env_u64("BROWSER_GRANT_TTL_SECONDS", 60)?,
             bridge_shared_secret: env::var("BRIDGE_SHARED_SECRET").unwrap_or_default(),
             session_ttl_seconds: env_u64("SESSION_TTL_SECONDS", 900)?,
             demo_mode,
@@ -81,6 +88,22 @@ impl Config {
         }
         if self.session_ttl_seconds == 0 || self.session_ttl_seconds > 3_600 {
             return Err("SESSION_TTL_SECONDS must be between 1 and 3600".into());
+        }
+        if !(10..=300).contains(&self.browser_grant_ttl_seconds) {
+            return Err("BROWSER_GRANT_TTL_SECONDS must be between 10 and 300".into());
+        }
+        if !self.octos_service_token.is_empty() {
+            if self.octos_service_token.len() < 24 {
+                return Err("OCTOS_SERVICE_TOKEN must contain at least 24 characters".into());
+            }
+            if secret_matches(&self.octos_service_token, &self.bridge_shared_secret)
+                || (!self.client_access_token.is_empty()
+                    && secret_matches(&self.octos_service_token, &self.client_access_token))
+            {
+                return Err(
+                    "OCTOS_SERVICE_TOKEN must be different from all other service secrets".into(),
+                );
+            }
         }
         if self.rtc_token_ttl_seconds > 86_400
             || u64::from(self.rtc_token_ttl_seconds) < self.session_ttl_seconds + 60
@@ -180,6 +203,20 @@ struct Session {
     bridge_uid: u32,
     state: String,
     expires_at_ms: u64,
+    owner_subject: Option<String>,
+    owner_profile_id: Option<String>,
+}
+
+#[derive(Clone)]
+struct BrowserGrant {
+    subject: String,
+    profile_id: String,
+    expires_at_ms: u64,
+}
+
+struct IssuedBrowserGrant {
+    token: String,
+    expires_at_ms: u64,
 }
 
 #[derive(Clone)]
@@ -191,6 +228,7 @@ struct SocketLink {
 #[derive(Default)]
 struct Inner {
     sessions: HashMap<String, Session>,
+    browser_grants: HashMap<String, BrowserGrant>,
     bridge: Option<SocketLink>,
     clients: HashMap<String, SocketLink>,
 }
@@ -218,6 +256,41 @@ fn unix_ms() -> u64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as u64
+}
+
+fn browser_grant_digest(token: &str) -> String {
+    URL_SAFE_NO_PAD.encode(Sha256::digest(token.as_bytes()))
+}
+
+fn issue_browser_grant(
+    inner: &mut Inner,
+    subject: &str,
+    profile_id: &str,
+    now_ms: u64,
+    ttl_seconds: u64,
+) -> IssuedBrowserGrant {
+    let mut random = [0_u8; 32];
+    random[..16].copy_from_slice(Uuid::new_v4().as_bytes());
+    random[16..].copy_from_slice(Uuid::new_v4().as_bytes());
+    let token = URL_SAFE_NO_PAD.encode(random);
+    let expires_at_ms = now_ms.saturating_add(ttl_seconds.saturating_mul(1_000));
+    inner.browser_grants.insert(
+        browser_grant_digest(&token),
+        BrowserGrant {
+            subject: subject.to_owned(),
+            profile_id: profile_id.to_owned(),
+            expires_at_ms,
+        },
+    );
+    IssuedBrowserGrant {
+        token,
+        expires_at_ms,
+    }
+}
+
+fn consume_browser_grant(inner: &mut Inner, token: &str, now_ms: u64) -> Option<BrowserGrant> {
+    let grant = inner.browser_grants.remove(&browser_grant_digest(token))?;
+    (grant.expires_at_ms >= now_ms).then_some(grant)
 }
 
 fn run_healthcheck() -> Result<(), String> {
@@ -335,22 +408,59 @@ fn client_authorized(req: &Request, config: &Config) -> bool {
     bearer_token(req).is_some_and(|value| secret_matches(&config.client_access_token, value))
 }
 
-fn require_client_access(req: &Request, res: &mut Response) -> bool {
-    if client_authorized(req, &state().config) {
-        true
-    } else {
-        res.headers_mut().insert(
-            header::WWW_AUTHENTICATE,
-            HeaderValue::from_static("Bearer realm=\"asr-session\""),
-        );
+fn require_octos_service_access(req: &Request, res: &mut Response) -> bool {
+    let config = &state().config;
+    if config.octos_service_token.is_empty() {
         render_error(
             res,
-            StatusCode::UNAUTHORIZED,
-            "unauthorized",
-            "Invalid client access token",
+            StatusCode::SERVICE_UNAVAILABLE,
+            "octos_integration_disabled",
+            "Octos browser grants are not configured",
         );
-        false
+        return false;
     }
+    if bearer_token(req).is_some_and(|value| secret_matches(&config.octos_service_token, value)) {
+        return true;
+    }
+    res.headers_mut().insert(
+        header::WWW_AUTHENTICATE,
+        HeaderValue::from_static("Bearer realm=\"octos-service\""),
+    );
+    render_error(
+        res,
+        StatusCode::UNAUTHORIZED,
+        "unauthorized",
+        "Invalid Octos service token",
+    );
+    false
+}
+
+async fn session_authorized(req: &Request, session_id: &str) -> bool {
+    let app = state();
+    if client_authorized(req, &app.config) {
+        return true;
+    }
+    let ticket = req
+        .cookie("asr_session")
+        .map(|cookie| cookie.value().to_owned())
+        .unwrap_or_default();
+    let inner = app.inner.lock().await;
+    inner.sessions.get(session_id).is_some_and(|session| {
+        session.state != "closed" && secret_matches(&session.ticket, &ticket)
+    })
+}
+
+async fn require_session_access(req: &Request, res: &mut Response, session_id: &str) -> bool {
+    if session_authorized(req, session_id).await {
+        return true;
+    }
+    render_error(
+        res,
+        StatusCode::UNAUTHORIZED,
+        "unauthorized",
+        "Invalid session authorization",
+    );
+    false
 }
 
 fn session_cookie(session: &Session, config: &Config) -> Cookie<'static> {
@@ -363,6 +473,71 @@ fn session_cookie(session: &Session, config: &Config) -> Cookie<'static> {
             config.session_ttl_seconds.try_into().unwrap_or(i64::MAX),
         ))
         .build()
+}
+
+fn session_api_cookie(session: &Session, config: &Config) -> Cookie<'static> {
+    Cookie::build(("asr_session", session.ticket.clone()))
+        .path(format!("/api/v1/sessions/{}", session.id))
+        .http_only(true)
+        .secure(config.public_base_url.starts_with("https://"))
+        .same_site(SameSite::Strict)
+        .max_age(CookieDuration::seconds(
+            config.session_ttl_seconds.try_into().unwrap_or(i64::MAX),
+        ))
+        .build()
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct BrowserGrantRequest {
+    subject: String,
+    profile_id: String,
+}
+
+fn valid_grant_identity(value: &str) -> bool {
+    !value.trim().is_empty() && value.len() <= 128 && !value.chars().any(char::is_control)
+}
+
+#[handler]
+async fn create_browser_grant(req: &mut Request, res: &mut Response) {
+    if !require_octos_service_access(req, res) {
+        return;
+    }
+    let request = match req.parse_json::<BrowserGrantRequest>().await {
+        Ok(request) => request,
+        Err(_) => {
+            render_error(
+                res,
+                StatusCode::BAD_REQUEST,
+                "invalid_request",
+                "A valid subject and profileId are required",
+            );
+            return;
+        }
+    };
+    if !valid_grant_identity(&request.subject) || !valid_grant_identity(&request.profile_id) {
+        render_error(
+            res,
+            StatusCode::BAD_REQUEST,
+            "invalid_request",
+            "A valid subject and profileId are required",
+        );
+        return;
+    }
+    let app = state();
+    let mut inner = app.inner.lock().await;
+    let issued = issue_browser_grant(
+        &mut inner,
+        request.subject.trim(),
+        request.profile_id.trim(),
+        unix_ms(),
+        app.config.browser_grant_ttl_seconds,
+    );
+    res.status_code(StatusCode::CREATED);
+    res.render(Json(json!({
+        "grant": issued.token,
+        "expiresAtMs": issued.expires_at_ms,
+    })));
 }
 
 #[handler]
@@ -407,7 +582,17 @@ async fn status(res: &mut Response) {
 #[handler]
 async fn create_session(req: &mut Request, res: &mut Response) {
     let app = state();
-    if !require_client_access(req, res) {
+    let operator_authorized = client_authorized(req, &app.config);
+    let supplied_grant = (!operator_authorized)
+        .then(|| bearer_token(req).map(str::to_owned))
+        .flatten();
+    if !operator_authorized && supplied_grant.is_none() {
+        render_error(
+            res,
+            StatusCode::UNAUTHORIZED,
+            "unauthorized",
+            "A valid browser grant is required",
+        );
         return;
     }
     let mut inner = app.inner.lock().await;
@@ -421,6 +606,7 @@ async fn create_session(req: &mut Request, res: &mut Response) {
         );
         return;
     }
+
     if inner
         .sessions
         .values()
@@ -434,6 +620,24 @@ async fn create_session(req: &mut Request, res: &mut Response) {
         );
         return;
     }
+
+    let owner = if operator_authorized {
+        None
+    } else {
+        let Some(grant) = supplied_grant
+            .as_deref()
+            .and_then(|token| consume_browser_grant(&mut inner, token, unix_ms()))
+        else {
+            render_error(
+                res,
+                StatusCode::UNAUTHORIZED,
+                "invalid_browser_grant",
+                "The browser grant is invalid, expired, or already used",
+            );
+            return;
+        };
+        Some(grant)
+    };
 
     let now = unix_ms();
     let id = Uuid::new_v4().to_string();
@@ -491,6 +695,8 @@ async fn create_session(req: &mut Request, res: &mut Response) {
         bridge_uid: app.config.bridge_uid,
         state: "starting".into(),
         expires_at_ms: now + app.config.session_ttl_seconds * 1000,
+        owner_subject: owner.as_ref().map(|grant| grant.subject.clone()),
+        owner_profile_id: owner.as_ref().map(|grant| grant.profile_id.clone()),
     };
 
     let start_event = json!({
@@ -532,26 +738,22 @@ async fn create_session(req: &mut Request, res: &mut Response) {
         }
     });
     let cookie = session_cookie(&session, &app.config);
-    info!(session_id = %session.id, "session created");
+    let api_cookie = session_api_cookie(&session, &app.config);
+    info!(
+        session_id = %session.id,
+        owner_subject = session.owner_subject.as_deref().unwrap_or("operator"),
+        owner_profile_id = session.owner_profile_id.as_deref().unwrap_or("operator"),
+        "session created"
+    );
     inner.sessions.insert(session.id.clone(), session);
     res.add_cookie(cookie);
+    res.add_cookie(api_cookie);
     res.status_code(StatusCode::CREATED);
     res.render(Json(response));
 }
 
 #[handler]
 async fn commit_utterance(req: &mut Request, res: &mut Response) {
-    if !require_client_access(req, res) {
-        return;
-    }
-    forward_session_command(req, res, "utterance.commit").await;
-}
-
-#[handler]
-async fn delete_session(req: &mut Request, res: &mut Response) {
-    if !require_client_access(req, res) {
-        return;
-    }
     let Some(id) = req.param::<String>("id") else {
         render_error(
             res,
@@ -561,6 +763,26 @@ async fn delete_session(req: &mut Request, res: &mut Response) {
         );
         return;
     };
+    if !require_session_access(req, res, &id).await {
+        return;
+    }
+    forward_session_command(req, res, "utterance.commit").await;
+}
+
+#[handler]
+async fn delete_session(req: &mut Request, res: &mut Response) {
+    let Some(id) = req.param::<String>("id") else {
+        render_error(
+            res,
+            StatusCode::BAD_REQUEST,
+            "bad_session_id",
+            "Missing session id",
+        );
+        return;
+    };
+    if !require_session_access(req, res, &id).await {
+        return;
+    }
     let app = state();
     let mut inner = app.inner.lock().await;
     let Some(session) = inner.sessions.get_mut(&id) else {
@@ -1007,6 +1229,9 @@ async fn session_reaper(app: Arc<AppState>) {
         inner.sessions.retain(|_, session| {
             session.state != "closed" || session.expires_at_ms.saturating_add(60_000) > now
         });
+        inner
+            .browser_grants
+            .retain(|_, grant| grant.expires_at_ms > now);
     }
 }
 
@@ -1076,6 +1301,7 @@ async fn main() {
 
     let api = Router::with_path("api/v1")
         .push(Router::with_path("status").get(status))
+        .push(Router::with_path("browser-grants").post(create_browser_grant))
         .push(Router::with_path("sessions").post(create_session))
         .push(
             Router::with_path("sessions/{id}")
@@ -1116,6 +1342,8 @@ mod tests {
             bridge_uid: 9001,
             rtc_token_ttl_seconds: 1200,
             client_access_token: String::new(),
+            octos_service_token: String::new(),
+            browser_grant_ttl_seconds: 60,
             bridge_shared_secret: "0123456789abcdef".into(),
             session_ttl_seconds: 900,
             demo_mode: true,
@@ -1143,8 +1371,34 @@ mod tests {
         config.agora_app_id = "970CA35de60c44645bbae8a215061b33".into();
         config.agora_app_certificate = "5CFd2fd1755d40ecb72977518be15d3b".into();
         config.client_access_token = "client-access-token-at-least-24".into();
+        config.octos_service_token = "octos-service-token-at-least-24".into();
         config.bridge_shared_secret = "bridge-secret-at-least-24-characters".into();
         assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn configured_octos_service_token_must_be_independent_and_long_lived_enough() {
+        let mut config = base_config();
+        config.octos_service_token = "too-short".into();
+        assert!(config.validate().is_err());
+
+        config.octos_service_token = config.bridge_shared_secret.clone();
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn browser_grant_is_one_time_and_expires() {
+        let mut inner = Inner::default();
+        let issued = issue_browser_grant(&mut inner, "user-1", "profile-1", 1_000, 60);
+
+        let grant = consume_browser_grant(&mut inner, &issued.token, 1_001)
+            .expect("fresh grant should be accepted");
+        assert_eq!(grant.subject, "user-1");
+        assert_eq!(grant.profile_id, "profile-1");
+        assert!(consume_browser_grant(&mut inner, &issued.token, 1_002).is_none());
+
+        let expired = issue_browser_grant(&mut inner, "user-2", "profile-2", 2_000, 10);
+        assert!(consume_browser_grant(&mut inner, &expired.token, 12_001).is_none());
     }
 
     #[test]

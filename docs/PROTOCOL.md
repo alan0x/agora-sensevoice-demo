@@ -8,12 +8,28 @@ Audio never flows through the VPS.
 - `GET /healthz`: process liveness.
 - `GET /readyz`: readiness; returns `200` only while the LAN Bridge is connected.
 - `GET /api/v1/status`: public availability and capacity without credential or session IDs.
+- `POST /api/v1/browser-grants`: server-to-server exchange for a short-lived,
+  one-time browser grant. Requires `Authorization: Bearer <OCTOS_SERVICE_TOKEN>`.
 - `POST /api/v1/sessions`: allocate the single ASR worker session.
 - `POST /api/v1/sessions/{id}/commit`: force an utterance boundary.
 - `DELETE /api/v1/sessions/{id}`: stop the session.
 - `GET /ws/client/{id}`: browser text-event WebSocket, authenticated by a path-scoped HttpOnly cookie.
 
-All mutating browser APIs require `Authorization: Bearer <CLIENT_ACCESS_TOKEN>`.
+The operator page may continue to create and control sessions with
+`Authorization: Bearer <CLIENT_ACCESS_TOKEN>`. An authenticated Octos server
+uses `OCTOS_SERVICE_TOKEN` to request a browser grant containing no reusable
+service credential. The browser presents that grant exactly once to
+`POST /api/v1/sessions`; expired or reused grants are rejected. Successful
+session creation sets path-scoped HttpOnly cookies for the client WebSocket and
+that session's commit/delete endpoints, so subsequent browser controls do not
+reuse the grant.
+
+Raw browser grants are never stored by the control plane: only their SHA-256
+digests, owner identifiers, and expiry are retained in memory. The grant is
+consumed atomically when the session is allocated. Existing single-session
+capacity and bridge-readiness checks run before consumption, so a temporary
+busy/offline response does not waste a valid grant.
+
 The session response includes the Agora App ID, a unique channel, numeric UID
 and dynamically issued short-lived AccessToken2 credential. The App Certificate
 never leaves the VPS. The WebSocket ticket is not included in JSON or URLs.
