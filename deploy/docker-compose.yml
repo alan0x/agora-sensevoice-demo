@@ -4,7 +4,7 @@ services:
   control-plane:
     build:
       context: ../control-plane
-    image: agora-sensevoice-control-plane:demo
+    image: agora-ominix-control-plane:production
     pull_policy: never
     restart: unless-stopped
     env_file:
@@ -35,7 +35,7 @@ services:
     build:
       context: ../bridge
       dockerfile: Dockerfile.mock
-    image: agora-sensevoice-mock-bridge:demo
+    image: agora-ominix-mock-bridge:development
     restart: unless-stopped
     depends_on:
       control-plane:

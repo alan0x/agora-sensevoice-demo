@@ -62,6 +62,15 @@
         <aside class="panel control-panel">
           <p class="panel-kicker">SESSION CONTROL</p>
           <h2>会话控制</h2>
+          <label class="access-field" id="accessField">
+            <span>访问密钥</span>
+            <input
+              id="accessKey"
+              type="password"
+              autocomplete="current-password"
+              placeholder="由管理员提供"
+            />
+          </label>
           <button id="startBtn" class="primary">开始识别</button>
           <div class="button-row">
             <button id="muteBtn" disabled>静音</button>
@@ -79,6 +88,38 @@
             <pre id="eventLog"></pre>
           </details>
         </aside>
+      </section>
+
+      <section class="panel observability-panel" aria-labelledby="observabilityTitle">
+        <div class="observability-head">
+          <div>
+            <p class="panel-kicker">END-TO-END TRACE</p>
+            <h2 id="observabilityTitle">识别链路观测</h2>
+            <p class="observability-note">主指标为同一句各链路阶段之和；跨网络耗时使用 Agora 统计和 WebSocket ACK 估算。</p>
+          </div>
+          <div class="observability-actions">
+            <button id="exportMetricsBtn" disabled>下载 JSON</button>
+            <button id="clearMetricsBtn" disabled>清空数据</button>
+          </div>
+        </div>
+
+        <div class="metric-summary" aria-label="会话延时汇总">
+          <div><small>本句端到端估算</small><strong id="latestLatency">—</strong></div>
+          <div><small>P50</small><strong id="p50Latency">—</strong></div>
+          <div><small>P95</small><strong id="p95Latency">—</strong></div>
+          <div><small>有效样本</small><strong id="sampleCount">0</strong></div>
+        </div>
+
+        <div class="trace-grid">
+          <div>
+            <p class="trace-label">最新一句</p>
+            <p id="traceText" class="trace-text">尚未收到最终识别结果。</p>
+            <p id="networkSummary" class="network-summary">Agora 网络统计：等待数据</p>
+          </div>
+          <div id="traceStages" class="trace-stages" aria-live="polite">
+            <p class="trace-empty">开始识别后，这里会展示各阶段耗时。</p>
+          </div>
+        </div>
       </section>
 
       <footer>
