@@ -91,9 +91,25 @@ docs/           协议与真实演示检查清单
 
 - VPS 后端按会话签发 AccessToken2 `007` 短期 Token，使用独立随机频道；App Certificate 不下发客户端或 Bridge。
 - 会话 API 使用独立访问密钥；浏览器事件票据使用路径限定的 HttpOnly Cookie，不出现在 URL。
-- 提供 liveness/readiness、Nginx 边缘限流、会话过期回收、断线释放和 Mac LaunchAgent 守护。
+- 提供 liveness/readiness、Nginx 边缘限流、会话过期回收和断线释放；Mac 上的 OminiX 与 Bridge 当前由操作员前台启动。
 - 文本通过 VPS WebSocket 回传，音频通过 Agora RTC；第一版不引入 RTM。
 - OminiX 当前是单路推理 worker，所以服务容量明确为 1；多 worker 路由是下一阶段。
+
+## 延时观测与汇报
+
+页面按 `utteranceId` 关联每句话，展示用户感知延时和分段瀑布：Agora 网络传输/抖动、Bridge 断句与排队、ASR 请求准备、OminiX HTTP 往返、Bridge 结果发送、VPS 转发、文字交付 ACK 和浏览器渲染。页面同时统计有效样本的 P50/P95，并可下载原始 JSON。
+
+浏览器的“说完到出字”由本地音量检测和 `performance.now()` 测量；Bridge/Python 与 VPS/Rust 各自用单调时钟测局部耗时。跨网络单向文字延时显示为 WebSocket ACK RTT/2 的估算值，不使用不同机器的系统时间直接相减。
+
+下载 JSON 后生成 Markdown 汇报表：
+
+```bash
+cd bridge
+python summarize_trace.py ~/Downloads/agora-asr-trace-*.json \
+  --output ~/Downloads/agora-asr-latency-report.md
+```
+
+导出文件包含识别文本，可能属于敏感数据；不要上传到无授权的日志或公共仓库。当前 OminiX API 没有内部队列/解码/MLX 推理字段，因此页面先把本机 HTTP 往返标为 `OminiX HTTP 往返`；若 OminiX 后续返回 `Server-Timing`，Bridge 已能解析并透传。
 
 下一阶段是企业 OIDC/SSO、Redis/PostgreSQL 会话与审计、多个 OminiX worker 调度、Prometheus/告警，并评估把 Agora Server SDK Bridge 迁至官方支持的 Linux 环境。
 

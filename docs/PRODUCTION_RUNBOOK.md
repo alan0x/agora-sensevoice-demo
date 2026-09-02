@@ -67,25 +67,23 @@ curl -i -X POST https://asr.pitun.cc/api/v1/sessions
 
 期望 `/healthz` 为 `200 ok`，`/readyz` 为 `503`，status 中 `bridgeOnline=false`、`accessProtected=true`、`capacity=1`；未带访问密钥创建会话必须返回 `401`。不要在命令行历史里直接展开真实访问密钥，端到端创建会话用浏览器验证。
 
-## 5. Mac 守护运行
+## 5. Mac 前台运行
 
-确认 `bridge/.env` 的 `BRIDGE_SHARED_SECRET` 与 VPS 一致，并先前台启动 OminiX、Bridge 各验证一次；验证完成后用 Ctrl-C 停掉两个前台进程。随后：
-
-```bash
-cd /Users/alan0x/Documents/projects/agora-sensevoice-demo
-bash deploy/macos/install-launch-agents.sh
-bash deploy/macos/status.sh
-```
-
-LaunchAgent 日志位于 `~/Library/Logs/agora-ominix-asr/`。查看状态和日志：
+当前选择由操作员在两个终端中前台运行，不安装 LaunchAgent。终端一启动 OminiX：
 
 ```bash
-launchctl print gui/$UID/com.pitun.ominix-asr
-launchctl print gui/$UID/com.pitun.agora-bridge
-tail -f ~/Library/Logs/agora-ominix-asr/*.log
+cd /Users/alan0x/Documents/projects/agora-sensevoice-demo/bridge
+bash start-ominix-asr.sh
 ```
 
-安装脚本只创建当前用户的两个 LaunchAgent，不需要 root。Bridge 会等待 OminiX 健康后启动，两个进程异常退出都会自动拉起。
+确认 `http://127.0.0.1:8080/health` 正常后，终端二启动 Bridge：
+
+```bash
+cd /Users/alan0x/Documents/projects/agora-sensevoice-demo/bridge
+bash start-real.sh
+```
+
+两个终端都需要保持运行，停止时分别按 `Ctrl-C`。确认 `bridge/.env` 的 `BRIDGE_SHARED_SECRET` 与 VPS 一致；`start-real.sh` 会等待 OminiX 健康后再连接公网控制面。
 
 ## 6. 端到端验收
 
@@ -93,9 +91,20 @@ tail -f ~/Library/Logs/agora-ominix-asr/*.log
 2. 打开 HTTPS 页面，输入 `CLIENT_ACCESS_TOKEN`；密钥仅保存在当前标签页。
 3. 点击“开始识别”并允许麦克风；页面网络响应中的频道应为 `asr-<随机值>`，Token 以 `007` 开头。
 4. 说一条临时中文句子，页面出现真实 OminiX final 文本。
-5. 验证静音、立即断句、结束会话。
-6. 再开一个会话时频道值必须变化；活动会话期间第二个创建请求应返回 `409`。
-7. 检查浏览器、Nginx 日志与 Git：不得出现 App Certificate、Bridge secret 或 WebSocket ticket。
+5. 在“识别链路观测”确认该句包含 Bridge 断句、OminiX HTTP、VPS 转发和文字 ACK 数据；连续采集至少 30 条后下载 JSON。
+6. 验证静音、立即断句、结束会话。
+7. 再开一个会话时频道值必须变化；活动会话期间第二个创建请求应返回 `409`。
+8. 检查浏览器、Nginx 日志与 Git：不得出现 App Certificate、Bridge secret 或 WebSocket ticket。
+
+生成 Markdown 延时汇报：
+
+```bash
+cd /Users/alan0x/Documents/projects/agora-sensevoice-demo/bridge
+python summarize_trace.py ~/Downloads/agora-asr-trace-*.json \
+  --output ~/Downloads/agora-asr-latency-report.md
+```
+
+至少汇报有效样本数、说完到最终文本 P50/P95、首个 partial P50/P95、Bridge 断句、OminiX HTTP 往返、RTF、丢包率和文字交付 ACK RTT。页面导出包含识别文本，按业务语音数据处理，不要提交到 Git。
 
 ## 7. 当前容量与下一阶段
 
