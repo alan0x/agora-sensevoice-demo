@@ -95,7 +95,7 @@
           <div>
             <p class="panel-kicker">END-TO-END TRACE</p>
             <h2 id="observabilityTitle">识别链路观测</h2>
-            <p class="observability-note">每句话独立关联；跨网络耗时使用 Agora 统计和 WebSocket ACK 估算。</p>
+            <p class="observability-note">主指标为同一句各链路阶段之和；跨网络耗时使用 Agora 统计和 WebSocket ACK 估算。</p>
           </div>
           <div class="observability-actions">
             <button id="exportMetricsBtn" disabled>下载 JSON</button>
@@ -104,7 +104,7 @@
         </div>
 
         <div class="metric-summary" aria-label="会话延时汇总">
-          <div><small>本句说完到出字</small><strong id="latestLatency">—</strong></div>
+          <div><small>本句端到端估算</small><strong id="latestLatency">—</strong></div>
           <div><small>P50</small><strong id="p50Latency">—</strong></div>
           <div><small>P95</small><strong id="p95Latency">—</strong></div>
           <div><small>有效样本</small><strong id="sampleCount">0</strong></div>

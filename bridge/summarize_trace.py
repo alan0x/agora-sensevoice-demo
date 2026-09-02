@@ -9,7 +9,9 @@ from typing import Any, Iterable, Sequence
 
 
 METRICS = (
-    ("说完到最终文本", ("browser", "speechEndToFinalMs"), "ms"),
+    ("端到端链路估算", ("summary", "estimatedEndToEndMs"), "ms"),
+    ("立即断句到最终文本", ("browser", "manualCommitToFinalMs"), "ms"),
+    ("客户端音量估算（仅参考）", ("browser", "speechEndToFinalMs"), "ms"),
     ("开始说话到最终文本", ("browser", "speechStartToFinalMs"), "ms"),
     ("开始说话到首个 partial", ("browser", "firstPartialMs"), "ms"),
     ("Agora 网络传输", ("agora", "networkTransportDelayMs"), "ms"),
