@@ -7,7 +7,7 @@ use std::{
     net::{TcpStream, ToSocketAddrs},
     path::PathBuf,
     sync::{Arc, OnceLock},
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Instant, SystemTime, UNIX_EPOCH},
 };
 
 use salvo::{
@@ -117,15 +117,16 @@ impl Config {
                 );
             }
             if secret_matches(&self.client_access_token, &self.bridge_shared_secret) {
-                return Err("CLIENT_ACCESS_TOKEN and BRIDGE_SHARED_SECRET must be different".into());
+                return Err(
+                    "CLIENT_ACCESS_TOKEN and BRIDGE_SHARED_SECRET must be different".into(),
+                );
             }
             if !self.public_base_url.starts_with("https://") {
                 return Err("PUBLIC_BASE_URL must use HTTPS when DEMO_MODE=false".into());
             }
             if self.allowed_origin.as_deref() != Some(self.public_base_url.as_str()) {
                 return Err(
-                    "ALLOWED_ORIGIN must exactly match PUBLIC_BASE_URL when DEMO_MODE=false"
-                        .into(),
+                    "ALLOWED_ORIGIN must exactly match PUBLIC_BASE_URL when DEMO_MODE=false".into(),
                 );
             }
         }
@@ -251,6 +252,62 @@ fn run_healthcheck() -> Result<(), String> {
 
 fn send_json(tx: &mpsc::UnboundedSender<Message>, value: &Value) -> bool {
     tx.send(Message::text(value.to_string())).is_ok()
+}
+
+fn insert_metric(event: &mut Value, group: &str, name: &str, value: Value) {
+    let Some(event_object) = event.as_object_mut() else {
+        return;
+    };
+    let metrics = event_object
+        .entry("metrics")
+        .or_insert_with(|| Value::Object(Default::default()));
+    let Some(metrics_object) = metrics.as_object_mut() else {
+        return;
+    };
+    let group_value = metrics_object
+        .entry(group)
+        .or_insert_with(|| Value::Object(Default::default()));
+    let Some(group_object) = group_value.as_object_mut() else {
+        return;
+    };
+    group_object.insert(name.to_owned(), value);
+}
+
+fn elapsed_ms(started: Instant) -> f64 {
+    (started.elapsed().as_secs_f64() * 100_000.0).round() / 100.0
+}
+
+fn result_delivery(value: &Value) -> Option<(String, String, u64)> {
+    let event_type = value.get("type")?.as_str()?;
+    if !matches!(event_type, "asr.partial" | "asr.final") {
+        return None;
+    }
+    Some((
+        event_type.to_owned(),
+        value.get("utteranceId")?.as_str()?.to_owned(),
+        value.get("seq")?.as_u64()?,
+    ))
+}
+
+fn delivery_key(event_type: &str, utterance_id: &str, sequence: u64) -> String {
+    format!("{event_type}:{utterance_id}:{sequence}")
+}
+
+fn client_delivery_ack(value: &Value, expected_session_id: &str) -> Option<(String, String, u64)> {
+    if value.get("type")?.as_str()? != "client.result_ack"
+        || value.get("sessionId")?.as_str()? != expected_session_id
+    {
+        return None;
+    }
+    let event_type = value.get("eventType")?.as_str()?;
+    if !matches!(event_type, "asr.partial" | "asr.final") {
+        return None;
+    }
+    Some((
+        event_type.to_owned(),
+        value.get("utteranceId")?.as_str()?.to_owned(),
+        value.get("seq")?.as_u64()?,
+    ))
 }
 
 fn render_error(res: &mut Response, status_code: StatusCode, code: &str, message: &str) {
@@ -681,37 +738,63 @@ async fn bridge_socket(mut socket: WebSocket, app: Arc<AppState>) {
 }
 
 async fn handle_bridge_event(app: &Arc<AppState>, text: &str) {
-    let event: Value = match serde_json::from_str(text) {
+    let relay_started = Instant::now();
+    let bridge_event_received_at_ms = unix_ms();
+    let mut event: Value = match serde_json::from_str(text) {
         Ok(event) => event,
         Err(error) => {
             warn!(%error, "ignored invalid bridge message");
             return;
         }
     };
-    let Some(event_type) = event.get("type").and_then(Value::as_str) else {
+    let Some(event_type) = event.get("type").and_then(Value::as_str).map(str::to_owned) else {
         warn!("ignored bridge message without type");
         return;
     };
-    let Some(session_id) = event.get("sessionId").and_then(Value::as_str) else {
+    let Some(session_id) = event
+        .get("sessionId")
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+    else {
         warn!(event_type, "ignored bridge message without sessionId");
         return;
     };
     let mut inner = app.inner.lock().await;
-    let Some(session) = inner.sessions.get_mut(session_id) else {
+    let Some(session) = inner.sessions.get_mut(&session_id) else {
         warn!(session_id, event_type, "ignored event for unknown session");
         return;
     };
-    match event_type {
+    match event_type.as_str() {
         "session.ready" => session.state = "ready".into(),
         "asr.error" => session.state = "error".into(),
         "session.closed" => session.state = "closed".into(),
-        "asr.partial" | "asr.final" => {}
+        "asr.partial" | "asr.final" | "trace.update" => {}
         _ => {
             warn!(session_id, event_type, "ignored unknown bridge event");
             return;
         }
     }
-    if let Some(client) = inner.clients.get(session_id) {
+    if inner.clients.contains_key(&session_id) {
+        insert_metric(
+            &mut event,
+            "vps",
+            "bridgeEventReceivedAtUnixMs",
+            json!(bridge_event_received_at_ms),
+        );
+        insert_metric(
+            &mut event,
+            "vps",
+            "relayQueueMs",
+            json!(elapsed_ms(relay_started)),
+        );
+        insert_metric(
+            &mut event,
+            "vps",
+            "clientEnqueuedAtUnixMs",
+            json!(unix_ms()),
+        );
+    }
+    if let Some(client) = inner.clients.get(&session_id) {
         send_json(&client.tx, &event);
     }
 }
@@ -771,6 +854,7 @@ async fn client_ws(req: &mut Request, res: &mut Response) {
 async fn client_socket(mut socket: WebSocket, app: Arc<AppState>, session_id: String) {
     let socket_id = Uuid::new_v4();
     let (tx, mut rx) = mpsc::unbounded_channel();
+    let mut pending_deliveries: HashMap<String, Instant> = HashMap::new();
     {
         let mut inner = app.inner.lock().await;
         let Some(state_value) = inner
@@ -799,10 +883,58 @@ async fn client_socket(mut socket: WebSocket, app: Arc<AppState>, session_id: St
         tokio::select! {
             outbound = rx.recv() => {
                 let Some(message) = outbound else { break; };
+                let tracked_result = message
+                    .as_str()
+                    .ok()
+                    .and_then(|text| serde_json::from_str::<Value>(text).ok())
+                    .as_ref()
+                    .and_then(result_delivery);
                 if socket.send(message).await.is_err() { break; }
+                if let Some((event_type, utterance_id, sequence)) = tracked_result {
+                    if pending_deliveries.len() >= 2_048 {
+                        pending_deliveries.clear();
+                    }
+                    pending_deliveries.insert(
+                        delivery_key(&event_type, &utterance_id, sequence),
+                        Instant::now(),
+                    );
+                }
             }
             inbound = socket.recv() => {
                 match inbound {
+                    Some(Ok(message)) if message.is_text() => {
+                        let ack = message
+                            .as_str()
+                            .ok()
+                            .and_then(|text| serde_json::from_str::<Value>(text).ok())
+                            .as_ref()
+                            .and_then(|value| client_delivery_ack(value, &session_id));
+                        let Some((event_type, utterance_id, sequence)) = ack else {
+                            continue;
+                        };
+                        let key = delivery_key(&event_type, &utterance_id, sequence);
+                        let Some(sent_at) = pending_deliveries.remove(&key) else {
+                            continue;
+                        };
+                        let ack_rtt_ms = elapsed_ms(sent_at);
+                        let update = json!({
+                            "type": "trace.update",
+                            "sessionId": session_id,
+                            "utteranceId": utterance_id,
+                            "seq": sequence,
+                            "eventType": event_type,
+                            "metrics": {
+                                "delivery": {
+                                    "vpsBrowserAckRttMs": ack_rtt_ms,
+                                    "estimatedVpsToBrowserMs":
+                                        (ack_rtt_ms * 50.0).round() / 100.0,
+                                }
+                            }
+                        });
+                        if socket.send(Message::text(update.to_string())).await.is_err() {
+                            break;
+                        }
+                    }
                     Some(Ok(message)) if message.is_close() => break,
                     None => break,
                     Some(Err(error)) => {
@@ -1033,5 +1165,43 @@ mod tests {
         let mut config = base_config();
         config.bridge_uid = config.client_uid;
         assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn result_delivery_requires_correlated_asr_event() {
+        let event = json!({
+            "type": "asr.final",
+            "utteranceId": "session:1",
+            "seq": 4,
+        });
+        assert_eq!(
+            result_delivery(&event),
+            Some(("asr.final".into(), "session:1".into(), 4))
+        );
+        assert!(result_delivery(&json!({"type": "trace.update"})).is_none());
+    }
+
+    #[test]
+    fn client_ack_is_scoped_to_its_session() {
+        let ack = json!({
+            "type": "client.result_ack",
+            "sessionId": "session-a",
+            "utteranceId": "session-a:1",
+            "eventType": "asr.final",
+            "seq": 7,
+        });
+        assert!(client_delivery_ack(&ack, "session-b").is_none());
+        assert_eq!(
+            client_delivery_ack(&ack, "session-a"),
+            Some(("asr.final".into(), "session-a:1".into(), 7))
+        );
+    }
+
+    #[test]
+    fn nested_metrics_preserve_existing_groups() {
+        let mut event = json!({"metrics": {"bridge": {"asrTotalMs": 123.0}}});
+        insert_metric(&mut event, "vps", "relayQueueMs", json!(1.5));
+        assert_eq!(event["metrics"]["bridge"]["asrTotalMs"], 123.0);
+        assert_eq!(event["metrics"]["vps"]["relayQueueMs"], 1.5);
     }
 }

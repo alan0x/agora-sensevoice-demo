@@ -7,7 +7,8 @@ import logging
 import os
 import random
 import signal
-from typing import Any, Awaitable, Callable, Dict, Optional
+import time
+from typing import Any, Awaitable, Callable, Dict, Optional, Tuple
 
 import websockets
 
@@ -31,7 +32,7 @@ class RealSession:
     ) -> None:
         self.session_id = session_id
         self.emit = emit
-        self.queue: asyncio.Queue[Optional[bytes]] = asyncio.Queue(maxsize=500)
+        self.queue: asyncio.Queue[Optional[Tuple[bytes, int]]] = asyncio.Queue(maxsize=500)
         self.segmenter = PcmSegmenter(
             SegmenterConfig(threshold_dbfs=env_float("VAD_THRESHOLD_DBFS", -38.0))
         )
@@ -52,52 +53,105 @@ class RealSession:
             token=agora["token"],
             uid=int(agora["uid"]),
             on_pcm=self._on_pcm,
+            on_network_stats=self._on_network_stats,
         )
         self.worker: Optional[asyncio.Task] = None
         self.partial_task: Optional[asyncio.Task] = None
         self.sequence = 0
+        self.network_stats: Dict[str, Any] = {}
 
     async def start(self) -> None:
         await self.receiver.start()
         self.worker = asyncio.create_task(self._process_audio())
 
-    def _on_pcm(self, pcm: bytes) -> None:
+    def _on_pcm(self, pcm: bytes, received_ns: int) -> None:
         try:
-            self.queue.put_nowait(pcm)
+            self.queue.put_nowait((pcm, received_ns))
         except asyncio.QueueFull:
             logger.warning("audio queue full; dropping one PCM frame")
 
+    def _on_network_stats(self, stats: Dict[str, Any]) -> None:
+        self.network_stats = stats
+
     async def _process_audio(self) -> None:
         while True:
-            pcm = await self.queue.get()
-            if pcm is None:
+            item = await self.queue.get()
+            if item is None:
                 return
-            for event in self.segmenter.feed(pcm):
+            pcm, received_ns = item
+            for event in self.segmenter.feed(pcm, received_ns):
                 await self._handle_segment(event)
 
     async def _handle_segment(self, event: SegmentEvent) -> None:
         if event.kind == "partial":
             if self.partial_task is None or self.partial_task.done():
                 self.partial_task = asyncio.create_task(
-                    self._transcribe(event.pcm, final=False)
+                    self._transcribe(event, final=False)
                 )
             return
         if self.partial_task and not self.partial_task.done():
             self.partial_task.cancel()
-        await self._transcribe(event.pcm, final=True)
+        await self._transcribe(event, final=True)
 
-    async def _transcribe(self, pcm: bytes, final: bool) -> None:
+    async def _transcribe(self, event: SegmentEvent, final: bool) -> None:
+        utterance_id = f"{self.session_id}:{event.utterance_index}"
+        asr_started_ns = time.perf_counter_ns()
         try:
-            text = await self.asr.transcribe(pcm)
-            if not text:
+            result = await self.asr.transcribe_detailed(event.pcm)
+            if not result.text:
                 return
             self.sequence += 1
+            speech_span_ms = max(
+                0.0, (event.last_voice_ns - event.speech_started_ns) / 1_000_000
+            )
+            audio_duration_ms = max(result.audio_duration_ms, 0.001)
+            metrics = {
+                "schemaVersion": 1,
+                "audio": {
+                    "durationMs": round(result.audio_duration_ms, 2),
+                    "speechSpanMs": round(speech_span_ms, 2),
+                    "boundaryReason": event.boundary_reason,
+                },
+                "agora": dict(self.network_stats),
+                "bridge": {
+                    "endpointMs": round(event.endpoint_ms, 2),
+                    "audioQueueMs": round(
+                        max(0.0, (asr_started_ns - event.emitted_ns) / 1_000_000), 2
+                    ),
+                    "asrRequestPrepareMs": round(result.request_prepare_ms, 2),
+                    "asrHttpRoundTripMs": round(result.http_round_trip_ms, 2),
+                    "asrResponseParseMs": round(result.response_parse_ms, 2),
+                    "asrTotalMs": round(result.total_ms, 2),
+                },
+                "asr": {
+                    "rtf": round(result.total_ms / audio_duration_ms, 4),
+                    "serverTimingMs": result.server_timing_ms,
+                },
+            }
+            payload = {
+                "type": "asr.final" if final else "asr.partial",
+                "sessionId": self.session_id,
+                "utteranceId": utterance_id,
+                "seq": self.sequence,
+                "text": result.text,
+                "metrics": metrics,
+                "bridgeResultReadyAtUnixMs": int(time.time() * 1000),
+            }
+            send_started_ns = time.perf_counter_ns()
+            await self.emit(payload)
+            send_ms = (time.perf_counter_ns() - send_started_ns) / 1_000_000
             await self.emit(
                 {
-                    "type": "asr.final" if final else "asr.partial",
+                    "type": "trace.update",
                     "sessionId": self.session_id,
+                    "utteranceId": utterance_id,
                     "seq": self.sequence,
-                    "text": text,
+                    "eventType": payload["type"],
+                    "metrics": {
+                        "bridge": {
+                            "resultWebSocketSendMs": round(send_ms, 2),
+                        }
+                    },
                 }
             )
         except asyncio.CancelledError:
@@ -108,6 +162,7 @@ class RealSession:
                 {
                     "type": "asr.error",
                     "sessionId": self.session_id,
+                    "utteranceId": utterance_id,
                     "message": str(exc),
                 }
             )
@@ -142,31 +197,65 @@ class MockSession:
         self.emit = emit
         self.task: Optional[asyncio.Task] = None
         self.index = 0
+        self.sequence = 0
 
     async def start(self) -> None:
         self.task = asyncio.create_task(self._play())
 
     async def _play(self) -> None:
         for line in self.LINES:
+            utterance_id = f"{self.session_id}:mock-{self.index + 1}"
             await asyncio.sleep(0.7)
+            self.sequence += 1
             await self.emit(
                 {
                     "type": "asr.partial",
                     "sessionId": self.session_id,
+                    "utteranceId": utterance_id,
+                    "seq": self.sequence,
                     "text": line[: max(4, len(line) // 2)],
                 }
             )
             await asyncio.sleep(0.65)
+            self.sequence += 1
             await self.emit(
-                {"type": "asr.final", "sessionId": self.session_id, "text": line}
+                {
+                    "type": "asr.final",
+                    "sessionId": self.session_id,
+                    "utteranceId": utterance_id,
+                    "seq": self.sequence,
+                    "text": line,
+                    "metrics": {
+                        "schemaVersion": 1,
+                        "audio": {"durationMs": 2400, "boundaryReason": "mock"},
+                        "agora": {
+                            "networkTransportDelayMs": 48,
+                            "jitterBufferDelayMs": 22,
+                            "audioLossRatePercent": 0,
+                        },
+                        "bridge": {
+                            "endpointMs": 650,
+                            "asrRequestPrepareMs": 3,
+                            "asrHttpRoundTripMs": 420,
+                            "asrResponseParseMs": 1,
+                            "asrTotalMs": 424,
+                        },
+                        "asr": {"rtf": 0.1767},
+                        "mock": True,
+                    },
+                }
             )
             self.index += 1
 
     async def commit(self) -> None:
+        self.index += 1
+        self.sequence += 1
         await self.emit(
             {
                 "type": "asr.final",
                 "sessionId": self.session_id,
+                "utteranceId": f"{self.session_id}:mock-{self.index}",
+                "seq": self.sequence,
                 "text": "手动断句成功：端到端控制链路工作正常。",
             }
         )

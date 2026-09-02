@@ -32,12 +32,19 @@ class SegmenterTests(unittest.TestCase):
             )
         )
         events = []
+        now_ns = 1_000_000_000
         for _ in range(8):
-            events.extend(segmenter.feed(tone(20)))
+            events.extend(segmenter.feed(tone(20), now_ns))
+            now_ns += 20_000_000
         for _ in range(11):
-            events.extend(segmenter.feed(silence(20)))
+            events.extend(segmenter.feed(silence(20), now_ns))
+            now_ns += 20_000_000
         self.assertEqual([event.kind for event in events], ["final"])
         self.assertGreater(len(events[0].pcm), 0)
+        self.assertEqual(events[0].utterance_index, 1)
+        self.assertEqual(events[0].boundary_reason, "silence")
+        self.assertAlmostEqual(events[0].endpoint_ms, 200.0)
+        self.assertGreater(events[0].audio_duration_ms, 300.0)
 
     def test_manual_commit(self):
         segmenter = PcmSegmenter(SegmenterConfig(speech_start_ms=40))
@@ -45,6 +52,26 @@ class SegmenterTests(unittest.TestCase):
         segmenter.feed(tone(20))
         events = segmenter.commit()
         self.assertEqual([event.kind for event in events], ["final"])
+        self.assertEqual(events[0].boundary_reason, "manual")
+
+    def test_partial_and_final_share_utterance_index(self):
+        segmenter = PcmSegmenter(
+            SegmenterConfig(
+                speech_start_ms=40,
+                speech_end_ms=40,
+                partial_interval_ms=40,
+            )
+        )
+        events = []
+        now_ns = 2_000_000_000
+        for _ in range(6):
+            events.extend(segmenter.feed(tone(20), now_ns))
+            now_ns += 20_000_000
+        for _ in range(2):
+            events.extend(segmenter.feed(silence(20), now_ns))
+            now_ns += 20_000_000
+        self.assertIn("partial", [event.kind for event in events])
+        self.assertEqual({event.utterance_index for event in events}, {1})
 
 
 if __name__ == "__main__":

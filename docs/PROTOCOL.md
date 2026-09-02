@@ -38,11 +38,32 @@ Bridge to control-plane:
 
 ```json
 {"type":"session.ready","sessionId":"..."}
-{"type":"asr.partial","sessionId":"...","seq":1,"text":"正在识别"}
-{"type":"asr.final","sessionId":"...","seq":2,"text":"最终结果"}
+{"type":"asr.partial","sessionId":"...","utteranceId":"...:1","seq":1,"text":"正在识别","metrics":{}}
+{"type":"asr.final","sessionId":"...","utteranceId":"...:1","seq":2,"text":"最终结果","metrics":{}}
+{"type":"trace.update","sessionId":"...","utteranceId":"...:1","seq":2,"eventType":"asr.final","metrics":{"bridge":{"resultWebSocketSendMs":1.2}}}
 {"type":"asr.error","sessionId":"...","message":"..."}
 {"type":"session.closed","sessionId":"..."}
 ```
+
+Browser to control-plane over the authenticated client WebSocket:
+
+```json
+{"type":"client.result_ack","sessionId":"...","utteranceId":"...:1","eventType":"asr.final","seq":2}
+```
+
+The control plane scopes ACKs to the authenticated session and returns a `trace.update` containing `vpsBrowserAckRttMs` and the explicitly labelled RTT/2 estimate. It also adds `metrics.vps.relayQueueMs` before forwarding Bridge events.
+
+The metrics object uses process-local monotonic durations:
+
+- `metrics.audio`: audio duration, speech span and boundary reason.
+- `metrics.agora`: Server SDK receive transport delay, jitter buffer, loss and bitrate.
+- `metrics.bridge`: endpointing, audio queue, request preparation, OminiX HTTP, response parsing and result send.
+- `metrics.asr`: real-time factor and optional OminiX `Server-Timing` durations.
+- `metrics.vps`: control-plane receive/enqueue timestamps and relay queue duration.
+- `metrics.delivery`: browser ACK RTT and estimated VPS-to-browser one-way duration.
+- `metrics.browser`: speech-start/final, speech-end/final, first partial and DOM update durations.
+
+Wall-clock timestamps are diagnostic only and MUST NOT be subtracted across hosts. Raw audio never enters this protocol.
 
 ## Lifecycle and current capacity
 
