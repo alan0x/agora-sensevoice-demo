@@ -26,6 +26,8 @@ body {
 }
 
 button { font: inherit; }
+input { font: inherit; }
+[hidden] { display: none !important; }
 
 .glow {
   position: fixed;
@@ -88,6 +90,11 @@ h2 { margin: 0; font-size: 21px; letter-spacing: -0.025em; }
 .control-panel > button:hover:not(:disabled), .button-row button:hover:not(:disabled) { border-color: rgba(85, 230, 165, 0.5); transform: translateY(-1px); }
 .control-panel > button:disabled, .button-row button:disabled { cursor: not-allowed; opacity: 0.4; }
 .control-panel .primary { margin-top: 28px; color: #042116; border-color: transparent; background: var(--green); font-weight: 800; }
+.access-field { display: block; margin-top: 24px; color: var(--muted); font-size: 12px; }
+.access-field span { display: block; margin-bottom: 7px; }
+.access-field input { width: 100%; padding: 11px 12px; border: 1px solid var(--line); border-radius: 10px; outline: none; color: var(--text); background: #09130f; }
+.access-field input:focus { border-color: rgba(85, 230, 165, 0.65); box-shadow: 0 0 0 3px rgba(85, 230, 165, 0.09); }
+.access-field + .primary { margin-top: 12px; }
 .control-panel .danger { color: #ffaaa8; background: rgba(255, 87, 84, 0.08); }
 .button-row { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; margin: 9px 0; }
 .session-meta { margin: 28px 0 14px; }

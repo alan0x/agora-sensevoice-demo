@@ -11,10 +11,13 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.96.0
         with:
-          components: rustfmt
+          components: rustfmt, clippy
       - name: Rust tests
         working-directory: control-plane
         run: cargo test --locked
+      - name: Rust lint
+        working-directory: control-plane
+        run: cargo clippy --locked -- -D warnings
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -31,3 +34,5 @@ jobs:
           node --check control-plane/static/app.js
           bash -n bridge/start-real.sh
           bash -n bridge/start-ominix-asr.sh
+          bash -n deploy/macos/install-launch-agents.sh
+          bash -n deploy/macos/status.sh

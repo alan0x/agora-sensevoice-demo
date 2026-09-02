@@ -1,5 +1,7 @@
 const ui = {
   start: document.querySelector("#startBtn"),
+  accessField: document.querySelector("#accessField"),
+  accessKey: document.querySelector("#accessKey"),
   mute: document.querySelector("#muteBtn"),
   commit: document.querySelector("#commitBtn"),
   stop: document.querySelector("#stopBtn"),
@@ -25,7 +27,11 @@ const runtime = {
   microphone: null,
   muted: false,
   meterTimer: null,
+  accessProtected: true,
+  accessToken: sessionStorage.getItem("asrAccessToken") || "",
 };
+
+ui.accessKey.value = runtime.accessToken;
 
 function log(message, data) {
   const stamp = new Date().toLocaleTimeString();
@@ -49,9 +55,13 @@ function setRunning(running) {
 }
 
 async function api(path, options = {}) {
+  const headers = { "Content-Type": "application/json", ...(options.headers || {}) };
+  if (runtime.accessToken && options.auth !== false) {
+    headers.Authorization = `Bearer ${runtime.accessToken}`;
+  }
   const response = await fetch(path, {
     ...options,
-    headers: { "Content-Type": "application/json", ...(options.headers || {}) },
+    headers,
   });
   if (!response.ok) {
     const payload = await response.json().catch(() => ({}));
@@ -62,7 +72,9 @@ async function api(path, options = {}) {
 
 async function refreshStatus() {
   try {
-    const status = await api("/api/v1/status");
+    const status = await api("/api/v1/status", { auth: false });
+    runtime.accessProtected = status.accessProtected;
+    ui.accessField.hidden = !status.accessProtected;
     ui.bridgeState.textContent = status.bridgeOnline ? "在线" : "离线";
     ui.modeBadge.textContent = status.demoMode ? "MOCK 演示模式" : "REAL 真实链路";
     setDot(ui.browserDot, "on");
@@ -114,6 +126,11 @@ function handleEvent(event) {
     return;
   }
   if (event.type === "session.closed") {
+    cleanupLocal();
+    return;
+  }
+  if (event.type === "session.expired") {
+    appendFinal("⚠ 会话已到期，请重新开始识别。");
     cleanupLocal();
   }
 }
@@ -167,6 +184,13 @@ function startMeter() {
 }
 
 async function start() {
+  runtime.accessToken = ui.accessKey.value.trim();
+  if (runtime.accessProtected && !runtime.accessToken) {
+    appendFinal("⚠ 请先填写管理员提供的访问密钥。");
+    ui.accessKey.focus();
+    return;
+  }
+  if (runtime.accessToken) sessionStorage.setItem("asrAccessToken", runtime.accessToken);
   ui.start.disabled = true;
   setSessionState("正在启动");
   setDot(ui.agoraDot, "busy");
@@ -251,10 +275,26 @@ async function cleanupLocal() {
 }
 
 ui.start.addEventListener("click", start);
+ui.accessKey.addEventListener("change", () => {
+  runtime.accessToken = ui.accessKey.value.trim();
+  if (runtime.accessToken) sessionStorage.setItem("asrAccessToken", runtime.accessToken);
+  else sessionStorage.removeItem("asrAccessToken");
+});
 ui.mute.addEventListener("click", toggleMute);
 ui.commit.addEventListener("click", commit);
 ui.stop.addEventListener("click", stop);
-window.addEventListener("beforeunload", () => runtime.microphone?.close());
+window.addEventListener("pagehide", () => {
+  runtime.microphone?.close();
+  if (!runtime.session) return;
+  const headers = runtime.accessToken
+    ? { Authorization: `Bearer ${runtime.accessToken}` }
+    : {};
+  fetch(`/api/v1/sessions/${runtime.session.sessionId}`, {
+    method: "DELETE",
+    headers,
+    keepalive: true,
+  }).catch(() => {});
+});
 
 refreshStatus();
 setInterval(refreshStatus, 5000);
