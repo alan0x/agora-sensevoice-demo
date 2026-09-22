@@ -4,14 +4,50 @@ from bridge.tts import PcmUpsampler2x, normalize_tts_text
 
 
 class NormalizeTtsTextTest(unittest.TestCase):
-    def test_chinese_text_gets_full_width_punctuation(self):
+    def test_chinese_text_avoids_comma_splitting_by_default(self):
         self.assertEqual(
-            normalize_tts_text("你好,世界!好吗?"),
+            normalize_tts_text("你好，世界！好吗？"),
+            "你好,世界！好吗？",
+        )
+        self.assertEqual(
+            normalize_tts_text("第一、第二；第三，第四。"),
+            "第一,第二;第三,第四。",
+        )
+
+    def test_chinese_text_legacy_full_width_when_disabled(self):
+        self.assertEqual(
+            normalize_tts_text("你好,世界!好吗?", avoid_comma_split=False),
             "你好，世界！好吗？",
         )
 
     def test_ascii_text_is_untouched(self):
         self.assertEqual(normalize_tts_text("hello, world!"), "hello, world!")
+
+
+class TtsClientConfigTest(unittest.TestCase):
+    def test_default_config_has_sampling_parameters(self):
+        from bridge.tts import TtsClient
+
+        client = TtsClient("http://127.0.0.1:8090/v1/audio/speech")
+        self.assertEqual(client.temperature, 0.2)
+        self.assertEqual(client.top_p, 0.8)
+        self.assertIsNone(client.seed)
+        self.assertTrue(client.avoid_comma_split)
+
+    def test_custom_sampling_config(self):
+        from bridge.tts import TtsClient
+
+        client = TtsClient(
+            "http://127.0.0.1:8090/v1/audio/speech",
+            temperature=0.0,
+            top_p=0.9,
+            seed=42,
+            avoid_comma_split=False,
+        )
+        self.assertEqual(client.temperature, 0.0)
+        self.assertEqual(client.top_p, 0.9)
+        self.assertEqual(client.seed, 42)
+        self.assertFalse(client.avoid_comma_split)
 
 
 def pcm(samples):

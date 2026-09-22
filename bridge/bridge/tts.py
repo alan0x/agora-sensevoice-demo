@@ -12,24 +12,33 @@ import httpx
 TTS_SOURCE_RATE = 24_000
 TTS_TARGET_RATE = 48_000
 
-# Half-width punctuation that confuses OminiX sentence splitting (it only
-# splits CJK punctuation inside Chinese text) and the Qwen3-TTS tokenizer.
-_CJK_PUNCT = str.maketrans({",": "，", ";": "；", "?": "？", "!": "！"})
+# Half-width punctuation mapping
+_CJK_TERMINATORS = str.maketrans({"?": "？", "!": "！"})
+_CJK_COMMAS_TO_ASCII = str.maketrans({"，": ",", "；": ";", "、": ","})
+_ASCII_TO_CJK_FULL = str.maketrans({",": "，", ";": "；", "?": "？", "!": "！"})
 
 
 def _has_cjk(text: str) -> bool:
     return any("一" <= char <= "鿿" for char in text)
 
 
-def normalize_tts_text(text: str) -> str:
-    """Convert half-width punctuation to full-width for Chinese text.
+def normalize_tts_text(text: str, avoid_comma_split: bool = True) -> str:
+    """Normalize punctuation for Qwen3-TTS.
 
-    OminiX splits sentences only on CJK punctuation, and the model handles
-    native punctuation more robustly; leave pure-ASCII text untouched.
+    If avoid_comma_split is True (default), clause separators (，, ；, 、) are
+    mapped to half-width so OminiX does not chop clauses into micro-fragments
+    that suffer prosody discontinuities and duration stalling (extreme slow speech).
+    Sentence terminators (？, ！) are kept as CJK punctuation.
+
+    If avoid_comma_split is False, legacy normalization to full-width is used.
     """
-    if _has_cjk(text):
-        return text.translate(_CJK_PUNCT)
-    return text
+    if not _has_cjk(text):
+        return text
+
+    if avoid_comma_split:
+        text = text.translate(_CJK_TERMINATORS)
+        return text.translate(_CJK_COMMAS_TO_ASCII)
+    return text.translate(_ASCII_TO_CJK_FULL)
 
 
 class PcmUpsampler2x:
@@ -68,6 +77,10 @@ class TtsClient:
         speed: float = 1.0,
         instruct: str = "",
         language: str = "chinese",
+        temperature: float = 0.2,
+        top_p: float = 0.8,
+        seed: Optional[int] = None,
+        avoid_comma_split: bool = True,
         timeout_seconds: float = 120.0,
     ) -> None:
         self.url = url
@@ -75,11 +88,15 @@ class TtsClient:
         self.speed = speed
         self.instruct = instruct
         self.language = language
+        self.temperature = temperature
+        self.top_p = top_p
+        self.seed = seed
+        self.avoid_comma_split = avoid_comma_split
         self._client = httpx.AsyncClient(timeout=timeout_seconds)
 
     async def stream_pcm(self, text: str, voice: Optional[str] = None) -> AsyncIterator[bytes]:
         body = {
-            "input": normalize_tts_text(text),
+            "input": normalize_tts_text(text, avoid_comma_split=self.avoid_comma_split),
             "model": "qwen3-tts",
             "response_format": "pcm",
             "language": self.language,
@@ -91,6 +108,12 @@ class TtsClient:
             body["instruct"] = self.instruct
         if self.speed != 1.0:
             body["speed"] = self.speed
+        if self.temperature is not None:
+            body["temperature"] = self.temperature
+        if self.top_p is not None:
+            body["top_p"] = self.top_p
+        if self.seed is not None:
+            body["seed"] = self.seed
         async with self._client.stream("POST", self.url, json=body) as response:
             response.raise_for_status()
             async for chunk in response.aiter_bytes():
@@ -99,3 +122,4 @@ class TtsClient:
 
     async def close(self) -> None:
         await self._client.aclose()
+
