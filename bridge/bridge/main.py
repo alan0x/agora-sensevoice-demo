@@ -225,67 +225,38 @@ class RealSession:
             }
         )
         try:
+            # Receive the complete utterance first (generation runs ~5x
+            # realtime, so even a long text arrives in a couple of seconds),
+            # then play it out. No streaming, no timers.
             upsampler = PcmUpsampler2x()
-            pending = bytearray()
+            audio = bytearray()
+            async for chunk in self.tts.stream_pcm(text, voice):
+                audio.extend(upsampler.feed(chunk))
+            if not audio:
+                raise RuntimeError("TTS returned no audio")
             quantum = int(TTS_TARGET_RATE * 2 * 0.01)  # 10 ms alignment
-            first_push = int(TTS_TARGET_RATE * 2 * 1.5)  # start after ~1.5 s
-            push_chunk = int(TTS_TARGET_RATE * 2 * 1.0)  # 1 s per scheduled push
-            started_playback = False
-            stream_done = False
-            received_ms = 0
+            if len(audio) % quantum:
+                audio.extend(b"\x00" * (quantum - len(audio) % quantum))
+            total_ms = len(audio) // (TTS_TARGET_RATE * 2 // 1000)
+            logger.info("tts stream complete: received=%dms", total_ms)
+
+            # Push the whole utterance in a few large buffers. The SDK paces
+            # playout itself; between buffers wait for it to drain, which is
+            # the pattern from the upstream SDK example.
+            max_push = int(TTS_TARGET_RATE * 2 * 5.0)  # ~5 s per buffer
+            offset = 0
             pushed_ms = 0
-
-            async def produce() -> None:
-                nonlocal stream_done, received_ms
-                async for chunk in self.tts.stream_pcm(text, voice):
-                    pending.extend(upsampler.feed(chunk))
-                    received_ms += len(chunk) // (TTS_SOURCE_RATE * 2 // 1000)
-                stream_done = True
-                logger.info("tts stream complete: received=%dms", received_ms)
-
-            producer = asyncio.create_task(produce())
-            try:
-                # Deadline pacing: TTS generation runs ~5x realtime, so we can
-                # keep the SDK queue perpetually fed. Push 1 s of audio on a
-                # strict 1 s monotonic schedule; never let the queue drain to
-                # empty, because every drain boundary is an audible gap at the
-                # receiver.
-                next_deadline = time.perf_counter()
-                while True:
-                    if not started_playback and len(pending) < first_push and not stream_done:
-                        await asyncio.sleep(0.02)
-                        continue
-                    if not pending:
-                        if stream_done:
-                            break
-                        await asyncio.sleep(0.02)
-                        continue
-                    if stream_done and len(pending) % quantum:
-                        pending.extend(b"\x00" * (quantum - len(pending) % quantum))
-                    size = min(len(pending), push_chunk)
-                    size -= size % quantum
-                    frame = bytearray(pending[:size])
-                    while not self.receiver.push_pcm(frame, TTS_TARGET_RATE, 1):
-                        await asyncio.sleep(0.02)
-                    del pending[:size]
-                    started_playback = True
-                    pushed_ms += size // (TTS_TARGET_RATE * 2 // 1000)
-                    logger.info(
-                        "tts push: pushed=%dms buffered=%dms",
-                        pushed_ms,
-                        len(pending) // (TTS_TARGET_RATE * 2 // 1000),
-                    )
-                    next_deadline += 1.0
-                    delay = next_deadline - time.perf_counter()
-                    if delay > 0:
-                        await asyncio.sleep(delay)
-            finally:
-                if not producer.done():
-                    producer.cancel()
-                    try:
-                        await producer
-                    except asyncio.CancelledError:
-                        pass
+            while offset < len(audio):
+                if offset > 0:
+                    while not self.receiver.push_ready():
+                        await asyncio.sleep(0.05)
+                size = min(len(audio) - offset, max_push)
+                frame = bytearray(audio[offset : offset + size])
+                while not self.receiver.push_pcm(frame, TTS_TARGET_RATE, 1):
+                    await asyncio.sleep(0.05)
+                offset += size
+                pushed_ms += size // (TTS_TARGET_RATE * 2 // 1000)
+                logger.info("tts push: pushed=%dms/%dms", pushed_ms, total_ms)
             await self.emit({"type": "tts.finished", "sessionId": self.session_id})
         except asyncio.CancelledError:
             raise
