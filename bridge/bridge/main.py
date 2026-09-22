@@ -198,7 +198,13 @@ class RealSession:
         for event in self.segmenter.commit():
             await self._handle_segment(event)
 
-    async def speak(self, text: str, voice: Optional[str] = None) -> None:
+    async def speak(
+        self,
+        text: str,
+        voice: Optional[str] = None,
+        speed: Optional[float] = None,
+        instruct: Optional[str] = None,
+    ) -> None:
         if self.tts is None:
             await self.emit(
                 {
@@ -219,9 +225,17 @@ class RealSession:
             except asyncio.CancelledError:
                 pass
             self.receiver.clear_audio_buffer()
-        self.tts_task = asyncio.create_task(self._speak(text, voice))
+        self.tts_task = asyncio.create_task(
+            self._speak(text, voice=voice, speed=speed, instruct=instruct)
+        )
 
-    async def _speak(self, text: str, voice: Optional[str]) -> None:
+    async def _speak(
+        self,
+        text: str,
+        voice: Optional[str] = None,
+        speed: Optional[float] = None,
+        instruct: Optional[str] = None,
+    ) -> None:
         await self.emit(
             {
                 "type": "tts.started",
@@ -244,7 +258,13 @@ class RealSession:
             async def produce() -> None:
                 nonlocal stream_done, stream_error
                 try:
-                    async for chunk in self.tts.stream_pcm(text, voice):
+                    try:
+                        tts_stream = self.tts.stream_pcm(
+                            text, voice=voice, speed=speed, instruct=instruct
+                        )
+                    except TypeError:
+                        tts_stream = self.tts.stream_pcm(text, voice=voice)
+                    async for chunk in tts_stream:
                         pending.extend(upsampler.feed(chunk))
                 except Exception as exc:
                     stream_error = exc
@@ -429,7 +449,13 @@ class MockSession:
             }
         )
 
-    async def speak(self, text: str, voice: Optional[str] = None) -> None:
+    async def speak(
+        self,
+        text: str,
+        voice: Optional[str] = None,
+        speed: Optional[float] = None,
+        instruct: Optional[str] = None,
+    ) -> None:
         await self.emit(
             {
                 "type": "tts.started",
@@ -533,7 +559,12 @@ class BridgeApp:
         elif event_type == "tts.speak":
             session = self.sessions.get(session_id)
             if session is not None:
-                await session.speak(payload.get("text", ""), payload.get("voice"))
+                await session.speak(
+                    payload.get("text", ""),
+                    voice=payload.get("voice"),
+                    speed=payload.get("speed"),
+                    instruct=payload.get("instruct"),
+                )
         elif event_type == "session.stop":
             await self.stop_session(session_id, notify=True)
 

@@ -1,25 +1,53 @@
+/* ==========================================================================
+   Octos Audio API Platform - Application Logic
+   ========================================================================== */
+
+const STORAGE_KEY = "octosAudioAccessToken";
+
 const ui = {
-  start: document.querySelector("#startBtn"),
-  accessField: document.querySelector("#accessField"),
+  // Navigation & Tabs
+  navTabs: document.querySelectorAll(".nav-tab"),
+  tabPanes: document.querySelectorAll(".tab-pane"),
+  navBridgeDot: document.querySelector("#navBridgeDot"),
+  navBridgeLabel: document.querySelector("#navBridgeLabel"),
+  tokenConfigBtn: document.querySelector("#tokenConfigBtn"),
+  tokenStatusText: document.querySelector("#tokenStatusText"),
+  tokenModal: document.querySelector("#tokenModal"),
   accessKey: document.querySelector("#accessKey"),
+
+  // Playground Header & Topbar
+  start: document.querySelector("#startBtn"),
   mute: document.querySelector("#muteBtn"),
   commit: document.querySelector("#commitBtn"),
   stop: document.querySelector("#stopBtn"),
-  transcript: document.querySelector("#transcript"),
-  partial: document.querySelector("#partial"),
-  eventLog: document.querySelector("#eventLog"),
   sessionId: document.querySelector("#sessionId"),
   sessionState: document.querySelector("#sessionState"),
   bridgeState: document.querySelector("#bridgeState"),
   modeBadge: document.querySelector("#modeBadge"),
+
+  // Topology Indicators
   browserDot: document.querySelector("#browserDot"),
   agoraDot: document.querySelector("#agoraDot"),
   bridgeDot: document.querySelector("#bridgeDot"),
   asrDot: document.querySelector("#asrDot"),
-  ttsText: document.querySelector("#ttsText"),
-  speak: document.querySelector("#speakBtn"),
+
+  // ASR Section
+  transcript: document.querySelector("#transcript"),
+  partial: document.querySelector("#partial"),
   level: document.querySelector(".audio-level"),
   levelBars: [...document.querySelectorAll(".audio-level i")],
+
+  // TTS Section
+  ttsText: document.querySelector("#ttsText"),
+  ttsVoiceSelect: document.querySelector("#ttsVoiceSelect"),
+  ttsVoiceCustom: document.querySelector("#ttsVoiceCustom"),
+  ttsSpeed: document.querySelector("#ttsSpeed"),
+  speedValueLabel: document.querySelector("#speedValueLabel"),
+  ttsInstruct: document.querySelector("#ttsInstruct"),
+  speak: document.querySelector("#speakBtn"),
+  ttsStatusText: document.querySelector("#ttsStatusText"),
+
+  // Observability & Metrics
   latestLatency: document.querySelector("#latestLatency"),
   p50Latency: document.querySelector("#p50Latency"),
   p95Latency: document.querySelector("#p95Latency"),
@@ -29,6 +57,7 @@ const ui = {
   networkSummary: document.querySelector("#networkSummary"),
   exportMetrics: document.querySelector("#exportMetricsBtn"),
   clearMetrics: document.querySelector("#clearMetricsBtn"),
+  eventLog: document.querySelector("#eventLog"),
 };
 
 const SPEECH_VOLUME_THRESHOLD = 0.025;
@@ -43,7 +72,7 @@ const runtime = {
   muted: false,
   meterTimer: null,
   accessProtected: true,
-  accessToken: sessionStorage.getItem("asrAccessToken") || "",
+  accessToken: localStorage.getItem(STORAGE_KEY) || sessionStorage.getItem("asrAccessToken") || "",
   speech: createSpeechState(),
   observations: [],
   traces: new Map(),
@@ -52,20 +81,170 @@ const runtime = {
   manualCommitAt: null,
 };
 
-ui.accessKey.value = runtime.accessToken;
+// ==========================================================================
+// Tab Switching & Hash Routing
+// ==========================================================================
+
+function switchTab(tabId) {
+  ui.navTabs.forEach((tab) => {
+    const isActive = tab.dataset.tab === tabId;
+    tab.classList.toggle("active", isActive);
+    tab.setAttribute("aria-selected", isActive);
+  });
+
+  ui.tabPanes.forEach((pane) => {
+    pane.classList.toggle("active", pane.id === `tab-${tabId}`);
+  });
+
+  if (window.location.hash !== `#${tabId}`) {
+    window.location.hash = `#${tabId}`;
+  }
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
+
+function handleHashChange() {
+  const hash = window.location.hash.replace("#", "") || "home";
+  if (["home", "docs", "playground"].includes(hash)) {
+    switchTab(hash);
+  } else {
+    switchTab("home");
+  }
+}
+
+window.addEventListener("hashchange", handleHashChange);
+ui.navTabs.forEach((tab) => {
+  tab.addEventListener("click", () => switchTab(tab.dataset.tab));
+});
+
+// ==========================================================================
+// Token Modal Management
+// ==========================================================================
+
+function updateTokenUI() {
+  if (runtime.accessToken) {
+    ui.accessKey.value = runtime.accessToken;
+    ui.tokenStatusText.textContent = "Token: ••••••••";
+    ui.tokenConfigBtn.style.borderColor = "rgba(16, 185, 129, 0.4)";
+    ui.tokenConfigBtn.style.color = "#34d399";
+  } else {
+    ui.accessKey.value = "";
+    ui.tokenStatusText.textContent = "配置密钥";
+    ui.tokenConfigBtn.style.borderColor = "var(--border-subtle)";
+    ui.tokenConfigBtn.style.color = "var(--text-secondary)";
+  }
+}
+
+function openTokenModal() {
+  ui.accessKey.value = runtime.accessToken;
+  ui.tokenModal.classList.remove("hidden");
+  setTimeout(() => ui.accessKey.focus(), 50);
+}
+
+function closeTokenModal() {
+  ui.tokenModal.classList.add("hidden");
+}
+
+function saveTokenAndClose() {
+  const val = ui.accessKey.value.trim();
+  runtime.accessToken = val;
+  if (val) {
+    localStorage.setItem(STORAGE_KEY, val);
+    sessionStorage.setItem("asrAccessToken", val);
+  } else {
+    localStorage.removeItem(STORAGE_KEY);
+    sessionStorage.removeItem("asrAccessToken");
+  }
+  updateTokenUI();
+  closeTokenModal();
+  log("访问密钥已更新");
+}
+
+ui.tokenConfigBtn.addEventListener("click", openTokenModal);
+updateTokenUI();
+
+// ==========================================================================
+// Code Snippets Tabs & Copy Functions (Documentation)
+// ==========================================================================
+
+document.querySelectorAll(".code-tabs-nav").forEach((nav) => {
+  nav.querySelectorAll(".code-tab").forEach((tab) => {
+    tab.addEventListener("click", () => {
+      const container = tab.closest(".tabs-code-wrapper");
+      const lang = tab.dataset.lang;
+      container.querySelectorAll(".code-tab").forEach((t) => t.classList.toggle("active", t === tab));
+      container.querySelectorAll(".code-tab-pane").forEach((pane) => {
+        pane.classList.toggle("active", pane.dataset.lang === lang);
+      });
+    });
+  });
+});
+
+document.querySelectorAll(".copy-btn").forEach((btn) => {
+  btn.addEventListener("click", async () => {
+    const text = btn.dataset.clipboard;
+    if (!text) return;
+    try {
+      await navigator.clipboard.writeText(text);
+      const originalText = btn.textContent;
+      btn.textContent = "✓ 已复制";
+      btn.classList.add("copied");
+      setTimeout(() => {
+        btn.textContent = originalText;
+        btn.classList.remove("copied");
+      }, 2000);
+    } catch {
+      btn.textContent = "复制失败";
+    }
+  });
+});
+
+// ==========================================================================
+// TTS Parameter Helpers (Playground)
+// ==========================================================================
+
+ui.ttsVoiceSelect.addEventListener("change", () => {
+  const isCustom = ui.ttsVoiceSelect.value === "custom";
+  ui.ttsVoiceCustom.classList.toggle("hidden", !isCustom);
+  if (isCustom) ui.ttsVoiceCustom.focus();
+});
+
+ui.ttsSpeed.addEventListener("input", () => {
+  ui.speedValueLabel.textContent = `${Number(ui.ttsSpeed.value).toFixed(1)}x`;
+});
+
+function setTtsSample(type) {
+  if (ui.ttsText.disabled) return;
+  if (type === "日常") {
+    ui.ttsText.value = "你好，我是实时语音助手。今天有什么我可以帮你的吗？";
+  } else if (type === "技术") {
+    ui.ttsText.value = "基于声网 RTC 与本地大模型算力，系统端到端 P50 识别延时已降低至 180 毫秒以内。";
+  } else if (type === "比赛") {
+    ui.ttsText.value = "形式上说，赛题应该不需要百分之百做正确。比我们以往的比赛，这个比赛当然更难一些，不见得是坏事。";
+  }
+}
+
+// ==========================================================================
+// Core Utilities & State
+// ==========================================================================
 
 function log(message, data) {
   const stamp = new Date().toLocaleTimeString();
   const suffix = data === undefined ? "" : ` ${JSON.stringify(data)}`;
-  ui.eventLog.textContent = `[${stamp}] ${message}${suffix}\n${ui.eventLog.textContent}`.slice(0, 8000);
+  if (ui.eventLog) {
+    ui.eventLog.textContent = `[${stamp}] ${message}${suffix}\n${ui.eventLog.textContent}`.slice(0, 10000);
+  }
 }
 
 function setDot(element, state) {
-  element.className = `status-dot${state ? ` ${state}` : ""}`;
+  if (element) {
+    element.className = `status-dot${state ? ` ${state}` : ""}`;
+  }
 }
 
 function setSessionState(label) {
-  ui.sessionState.textContent = label;
+  if (ui.sessionState) {
+    ui.sessionState.textContent = label;
+  }
 }
 
 function setRunning(running) {
@@ -74,7 +253,13 @@ function setRunning(running) {
   ui.commit.disabled = !running;
   ui.stop.disabled = !running;
   ui.ttsText.disabled = !running;
+  ui.ttsVoiceSelect.disabled = !running;
+  ui.ttsSpeed.disabled = !running;
+  ui.ttsInstruct.disabled = !running;
   ui.speak.disabled = !running;
+  if (ui.ttsVoiceSelect.value === "custom") {
+    ui.ttsVoiceCustom.disabled = !running;
+  }
 }
 
 function createSpeechState() {
@@ -151,363 +336,161 @@ function observeSpeechLevel(volume, observedAt) {
   }
 }
 
-function currentLocalAudioStats() {
-  try {
-    const raw = runtime.rtcClient?.getLocalAudioStats?.() || {};
-    const direct = raw && typeof raw === "object" ? raw : {};
-    const nested = Object.values(direct).find(
-      (value) => value && typeof value === "object" && !Array.isArray(value),
-    );
-    const stats = "sendBitrate" in direct || "currentPacketLossRate" in direct
-      ? direct
-      : (nested || {});
-    return {
-      sendBitrateBps: asFiniteNumber(stats.sendBitrate),
-      sendPackets: asFiniteNumber(stats.sendPackets),
-      sendPacketsLost: asFiniteNumber(stats.sendPacketsLost),
-      currentPacketLossRate: asFiniteNumber(stats.currentPacketLossRate),
-      codecType: stats.codecType || null,
-      uplinkNetworkQuality: asFiniteNumber(runtime.networkQuality?.uplinkNetworkQuality),
-      downlinkNetworkQuality: asFiniteNumber(runtime.networkQuality?.downlinkNetworkQuality),
-    };
-  } catch (error) {
-    log("读取 Agora 本地音频统计失败", { error: error.message });
-    return {};
-  }
-}
-
-function traceFor(event) {
-  if (!event.utteranceId) return null;
-  let trace = runtime.traces.get(event.utteranceId);
-  if (!trace) {
-    trace = {
-      schemaVersion: 1,
-      recordedAt: new Date().toISOString(),
-      sessionId: event.sessionId || runtime.session?.sessionId || null,
-      utteranceId: event.utteranceId,
-      seq: event.seq ?? null,
-      text: "",
-      metrics: {},
-      complete: false,
-    };
-    runtime.traces.set(event.utteranceId, trace);
-  }
-  if (event.seq !== undefined) trace.seq = event.seq;
-  if (event.metrics) mergeObjects(trace.metrics, event.metrics);
-  return trace;
-}
-
-function updateDerivedMetrics(trace) {
-  if (!trace) return null;
-  const metrics = trace.metrics || {};
-  const bridge = metrics.bridge || {};
-  const endpointMs = asFiniteNumber(bridge.endpointMs);
-  const asrTotalMs = asFiniteNumber(bridge.asrTotalMs);
-  if (endpointMs === null || asrTotalMs === null) return trace;
-
-  const optionalComponents = [
-    metrics.agora?.networkTransportDelayMs,
-    metrics.agora?.jitterBufferDelayMs,
-    bridge.audioQueueMs,
-    bridge.resultWebSocketSendMs,
-    metrics.vps?.relayQueueMs,
-    metrics.delivery?.estimatedVpsToBrowserMs,
-    metrics.browser?.renderMs,
-  ];
-  const estimatedEndToEndMs = optionalComponents.reduce(
-    (total, value) => total + (asFiniteNumber(value) ?? 0),
-    endpointMs + asrTotalMs,
-  );
-  mergeObjects(trace.metrics, {
-    summary: {
-      estimatedEndToEndMs: roundMetric(estimatedEndToEndMs),
-      method: "component-sum-v1",
-    },
-  });
-  return trace;
-}
-
-function sendResultAck(event) {
-  const socket = runtime.socket;
-  if (
-    !socket
-    || socket.readyState !== WebSocket.OPEN
-    || !event.utteranceId
-    || event.seq === undefined
-  ) return;
-  socket.send(JSON.stringify({
-    type: "client.result_ack",
-    sessionId: event.sessionId,
-    utteranceId: event.utteranceId,
-    eventType: event.type,
-    seq: event.seq,
-  }));
-}
-
-function recordPartialTrace(event, receivedAt) {
-  const trace = traceFor(event);
-  if (!trace) return;
-  if (!runtime.firstPartialMs.has(event.utteranceId) && runtime.speech.speechStartAt !== null) {
-    runtime.firstPartialMs.set(
-      event.utteranceId,
-      roundMetric(receivedAt - runtime.speech.speechStartAt),
-    );
-  }
-  sendResultAck(event);
-}
-
-function recordFinalTrace(event, receivedAt, renderMs) {
-  const trace = traceFor(event);
-  if (!trace) return;
-  trace.text = event.text || "";
-  const speech = runtime.speech;
-  const browserMetrics = {
-    speechStartToFinalMs: speech.speechStartAt === null
-      ? null
-      : roundMetric(receivedAt - speech.speechStartAt),
-    speechEndToFinalMs: speech.lastVoiceAt === null
-      ? null
-      : roundMetric(receivedAt - speech.lastVoiceAt),
-    firstPartialMs: runtime.firstPartialMs.get(event.utteranceId) ?? null,
-    renderMs: roundMetric(renderMs),
-    speechVolumeThreshold: SPEECH_VOLUME_THRESHOLD,
-    meterIntervalMs: METER_INTERVAL_MS,
-    manualCommitToFinalMs: runtime.manualCommitAt === null
-      ? null
-      : roundMetric(receivedAt - runtime.manualCommitAt),
-    resultReceivedAtUnixMs: Date.now(),
-  };
-  mergeObjects(trace.metrics, {
-    browser: browserMetrics,
-    agoraClient: currentLocalAudioStats(),
-  });
-  updateDerivedMetrics(trace);
-  if (!trace.complete) {
-    trace.complete = true;
-    runtime.observations.push(trace);
-  }
-  runtime.speech = createSpeechState();
-  runtime.manualCommitAt = null;
-  runtime.firstPartialMs.delete(event.utteranceId);
-  sendResultAck(event);
-  renderObservability(trace);
-}
-
-function applyTraceUpdate(event) {
-  const trace = traceFor(event);
-  updateDerivedMetrics(trace);
-  if (trace) renderObservability(trace.complete ? trace : runtime.observations.at(-1));
-}
-
-function traceStages(trace) {
-  const metrics = trace?.metrics || {};
-  const bridge = metrics.bridge || {};
-  const agora = metrics.agora || {};
-  const delivery = metrics.delivery || {};
-  const browser = metrics.browser || {};
-  const vps = metrics.vps || {};
-  return [
-    ["Agora 网络传输", agora.networkTransportDelayMs, true],
-    ["Agora 抖动缓冲", agora.jitterBufferDelayMs, false],
-    ["Bridge 断句", bridge.endpointMs, false],
-    ["Bridge 音频排队", bridge.audioQueueMs, false],
-    ["ASR 请求准备", bridge.asrRequestPrepareMs, false],
-    ["OminiX HTTP 往返", bridge.asrHttpRoundTripMs, false],
-    ["ASR 响应解析", bridge.asrResponseParseMs, false],
-    ["Bridge 文字发送", bridge.resultWebSocketSendMs, false],
-    ["VPS 转发排队", vps.relayQueueMs, false],
-    ["VPS→浏览器（估算）", delivery.estimatedVpsToBrowserMs, true],
-    ["浏览器渲染", browser.renderMs, false],
-    ["立即断句→文字", browser.manualCommitToFinalMs, false],
-  ].filter(([, value]) => asFiniteNumber(value) !== null);
-}
-
-function renderObservability(preferredTrace = null) {
-  runtime.observations.forEach(updateDerivedMetrics);
-  updateDerivedMetrics(preferredTrace);
-  const latest = preferredTrace || runtime.observations.at(-1) || null;
-  const tails = runtime.observations
-    .map((trace) => asFiniteNumber(trace.metrics?.summary?.estimatedEndToEndMs))
-    .filter((value) => value !== null);
-  const latestTail = asFiniteNumber(latest?.metrics?.summary?.estimatedEndToEndMs);
-  ui.latestLatency.textContent = formatMs(latestTail);
-  ui.p50Latency.textContent = formatMs(percentile(tails, 0.5));
-  ui.p95Latency.textContent = formatMs(percentile(tails, 0.95));
-  ui.sampleCount.textContent = String(tails.length);
-  ui.exportMetrics.disabled = runtime.observations.length === 0;
-  ui.clearMetrics.disabled = runtime.observations.length === 0;
-
-  if (!latest) return;
-  ui.traceText.textContent = latest.text || "指标更新中…";
-  const agora = latest.metrics?.agora || {};
-  const client = latest.metrics?.agoraClient || {};
-  const networkParts = [];
-  if (asFiniteNumber(agora.audioLossRatePercent) !== null) {
-    networkParts.push(`Bridge 收音丢包 ${agora.audioLossRatePercent}%`);
-  }
-  if (asFiniteNumber(client.uplinkNetworkQuality) !== null) {
-    networkParts.push(`浏览器上行等级 ${client.uplinkNetworkQuality}`);
-  }
-  if (asFiniteNumber(agora.receivedBitrateKbps) !== null) {
-    networkParts.push(`接收码率 ${agora.receivedBitrateKbps}kbps`);
-  }
-  ui.networkSummary.textContent = networkParts.length
-    ? `Agora 网络统计：${networkParts.join(" · ")}`
-    : "Agora 网络统计：当前 SDK 尚未上报样本";
-
-  const stages = traceStages(latest);
-  if (!stages.length) {
-    ui.traceStages.innerHTML = '<p class="trace-empty">该结果尚未携带分段指标。</p>';
-    return;
-  }
-  const maximum = Math.max(...stages.map(([, value]) => Number(value)), 1);
-  ui.traceStages.replaceChildren(...stages.map(([label, value, estimated]) => {
-    const row = document.createElement("div");
-    row.className = `trace-stage${estimated ? " estimated" : ""}`;
-    const name = document.createElement("span");
-    name.textContent = label;
-    const bar = document.createElement("span");
-    bar.className = "trace-bar";
-    const fill = document.createElement("i");
-    fill.style.width = `${Math.max(2, Math.min(100, Number(value) / maximum * 100))}%`;
-    bar.append(fill);
-    const duration = document.createElement("strong");
-    duration.textContent = formatMs(value);
-    row.append(name, bar, duration);
-    return row;
-  }));
-}
-
-function exportObservations() {
-  if (!runtime.observations.length) return;
-  const report = {
-    schemaVersion: 1,
-    exportedAt: new Date().toISOString(),
-    measurement: {
-      speechVolumeThreshold: SPEECH_VOLUME_THRESHOLD,
-      meterIntervalMs: METER_INTERVAL_MS,
-      primaryMetric: "metrics.summary.estimatedEndToEndMs",
-      note: "Primary latency is the sum of same-utterance stages; network one-way latency is estimated from RTT. Browser volume timing is diagnostic only.",
-    },
-    observations: runtime.observations,
-  };
-  const blob = new Blob([JSON.stringify(report, null, 2)], { type: "application/json" });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = `agora-asr-trace-${new Date().toISOString().replaceAll(":", "-")}.json`;
-  link.click();
-  URL.revokeObjectURL(url);
-}
-
-function clearObservations() {
-  runtime.observations = [];
-  runtime.traces.clear();
-  runtime.firstPartialMs.clear();
-  ui.traceText.textContent = "尚未收到最终识别结果。";
-  ui.networkSummary.textContent = "Agora 网络统计：等待数据";
-  ui.traceStages.innerHTML = '<p class="trace-empty">开始识别后，这里会展示各阶段耗时。</p>';
-  renderObservability();
-}
+// ==========================================================================
+// HTTP API Client
+// ==========================================================================
 
 async function api(path, options = {}) {
-  const headers = { "Content-Type": "application/json", ...(options.headers || {}) };
-  if (runtime.accessToken && options.auth !== false) {
+  const headers = { ...(options.headers || {}) };
+  if (!headers["Content-Type"] && options.body) {
+    headers["Content-Type"] = "application/json";
+  }
+  if (runtime.accessToken) {
     headers.Authorization = `Bearer ${runtime.accessToken}`;
   }
-  const response = await fetch(path, {
-    ...options,
-    headers,
-  });
+  const response = await fetch(path, { credentials: "same-origin", credentials_mode: "include", ...options, headers });
+  if (response.status === 204) return null;
+  const contentType = response.headers.get("content-type") || "";
+  const payload = contentType.includes("application/json")
+    ? await response.json()
+    : await response.text();
   if (!response.ok) {
-    const payload = await response.json().catch(() => ({}));
-    throw new Error(payload.error?.message || `${response.status} ${response.statusText}`);
+    const message = payload?.error?.message || payload?.message || response.statusText;
+    throw new Error(message);
   }
-  return response.status === 204 ? null : response.json();
+  return payload;
 }
 
 async function refreshStatus() {
   try {
-    const status = await api("/api/v1/status", { auth: false });
-    runtime.accessProtected = status.accessProtected;
-    ui.accessField.hidden = !status.accessProtected;
-    ui.bridgeState.textContent = status.bridgeOnline ? "在线" : "离线";
-    ui.modeBadge.textContent = status.demoMode ? "MOCK 演示模式" : "REAL 真实链路";
-    setDot(ui.browserDot, "on");
-    setDot(ui.bridgeDot, status.bridgeOnline ? "on" : "");
+    const status = await api("/api/v1/status");
+    runtime.accessProtected = Boolean(status.accessProtected);
+    const bridgeOk = Boolean(status.bridgeOnline);
+
+    if (ui.navBridgeDot && ui.navBridgeLabel) {
+      setDot(ui.navBridgeDot, bridgeOk ? "on" : "error");
+      ui.navBridgeLabel.textContent = bridgeOk ? "Bridge 在线" : "Bridge 离线";
+    }
+
+    if (ui.bridgeState) {
+      ui.bridgeState.textContent = bridgeOk ? "在线 (就绪)" : "离线";
+      ui.bridgeState.style.color = bridgeOk ? "#34d399" : "#f87171";
+    }
+
+    setDot(ui.bridgeDot, bridgeOk ? "on" : "");
+    if (ui.modeBadge) {
+      ui.modeBadge.textContent = status.demoMode ? "MOCK 演示模式" : "RTC 真实推流";
+    }
   } catch (error) {
-    setDot(ui.browserDot, "");
-    log("控制面状态检查失败", { error: error.message });
+    if (ui.navBridgeLabel) ui.navBridgeLabel.textContent = "控制面异常";
+    if (ui.bridgeState) ui.bridgeState.textContent = "无法连接";
+    setDot(ui.navBridgeDot, "error");
+    setDot(ui.bridgeDot, "error");
   }
 }
 
-function openEventSocket(path) {
-  const scheme = location.protocol === "https:" ? "wss:" : "ws:";
-  const socket = new WebSocket(`${scheme}//${location.host}${path}`);
+// ==========================================================================
+// WebSocket & Event Handling
+// ==========================================================================
+
+function openEventSocket(wsPath) {
+  const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+  const socket = new WebSocket(`${protocol}//${window.location.host}${wsPath}`);
   runtime.socket = socket;
-  socket.addEventListener("open", () => log("文本事件 WebSocket 已连接"));
-  socket.addEventListener("message", (event) => {
-    const receivedAt = performance.now();
-    const payload = JSON.parse(event.data);
-    log(`收到 ${payload.type}`, payload.text ? { text: payload.text } : undefined);
-    handleEvent(payload, receivedAt);
+
+  socket.addEventListener("open", () => {
+    log("已连接控制面 WebSocket 事件流");
+    setDot(ui.browserDot, "on");
   });
-  socket.addEventListener("close", () => log("文本事件 WebSocket 已断开"));
-  socket.addEventListener("error", () => log("文本事件 WebSocket 异常"));
+
+  socket.addEventListener("message", (event) => {
+    try {
+      const payload = JSON.parse(event.data);
+      handleServerEvent(payload);
+    } catch {
+      log("收到无法解析的消息", event.data);
+    }
+  });
+
+  socket.addEventListener("close", (e) => {
+    log("WebSocket 断开", { code: e.code });
+    setDot(ui.browserDot, "");
+    if (runtime.session) cleanupLocal();
+  });
+
+  socket.addEventListener("error", () => {
+    setDot(ui.browserDot, "error");
+  });
 }
 
-function handleEvent(event, receivedAt = performance.now()) {
-  if (event.type === "session.snapshot") {
-    if (event.state === "ready") markReady();
-    return;
-  }
+function handleServerEvent(event) {
   if (event.type === "session.ready") {
     markReady();
+    log("会话已就绪");
     return;
   }
+
   if (event.type === "asr.partial") {
-    recordPartialTrace(event, receivedAt);
-    ui.partial.textContent = event.text || "";
     setDot(ui.asrDot, "busy");
+    ui.partial.textContent = event.text || "";
+    recordPartialEvent(event);
     return;
   }
+
   if (event.type === "asr.final") {
-    ui.partial.textContent = "";
-    const renderStartedAt = performance.now();
-    appendFinal(event.text || "");
-    recordFinalTrace(event, receivedAt, performance.now() - renderStartedAt);
     setDot(ui.asrDot, "on");
+    ui.partial.textContent = "";
+    appendFinal(event.text, event.metrics);
+    recordFinalEvent(event);
     return;
   }
+
   if (event.type === "trace.update") {
-    applyTraceUpdate(event);
+    recordTraceUpdate(event);
     return;
   }
+
   if (event.type === "asr.error") {
-    setSessionState("识别错误");
-    setDot(ui.asrDot, "");
-    appendFinal(`⚠ ${event.message || "ASR 发生错误"}`);
+    setDot(ui.asrDot, "error");
+    appendFinal(`⚠ 识别错误: ${event.message || "未知异常"}`);
+    log("识别异常", event);
     return;
   }
+
   if (event.type === "tts.started") {
     setDot(ui.asrDot, "busy");
-    log("TTS 朗读开始", { characters: event.characters });
+    if (ui.ttsStatusText) {
+      ui.ttsStatusText.textContent = `正在朗读 (${event.characters} 字)...`;
+      ui.ttsStatusText.style.color = "#38bdf8";
+    }
     return;
   }
+
   if (event.type === "tts.finished") {
     setDot(ui.asrDot, "on");
-    log("TTS 朗读完成");
+    if (ui.ttsStatusText) {
+      ui.ttsStatusText.textContent = "朗读完成";
+      ui.ttsStatusText.style.color = "#34d399";
+    }
     return;
   }
+
   if (event.type === "tts.error") {
     setDot(ui.asrDot, "");
-    appendFinal(`⚠ TTS 失败:${event.message || "未知错误"}`);
+    if (ui.ttsStatusText) {
+      ui.ttsStatusText.textContent = `朗读失败: ${event.message}`;
+      ui.ttsStatusText.style.color = "#f87171";
+    }
+    appendFinal(`⚠ TTS 失败: ${event.message || "未知错误"}`);
     return;
   }
+
   if (event.type === "session.closed") {
+    log("收到 session.closed 事件");
     cleanupLocal();
     return;
   }
+
   if (event.type === "session.expired") {
     appendFinal("⚠ 会话已到期，请重新开始识别。");
     cleanupLocal();
@@ -520,43 +503,231 @@ function markReady() {
   setDot(ui.asrDot, "on");
 }
 
-function appendFinal(text) {
+function appendFinal(text, metrics) {
   if (!text) return;
   ui.transcript.querySelector(".placeholder")?.remove();
-  const line = document.createElement("p");
-  line.className = "final";
-  line.textContent = text;
-  ui.transcript.append(line);
-  line.scrollIntoView({ behavior: "smooth", block: "nearest" });
+
+  const item = document.createElement("div");
+  item.className = "final-utterance";
+
+  const meta = document.createElement("div");
+  meta.className = "utterance-meta";
+  const stamp = new Date().toLocaleTimeString();
+  const latency = metrics?.bridge?.asrTotalMs ? `${Math.round(metrics.bridge.asrTotalMs)}ms` : "";
+  meta.innerHTML = `<span>${stamp}</span><span>${latency ? `推理: ${latency}` : ""}</span>`;
+
+  const content = document.createElement("div");
+  content.className = "utterance-text";
+  content.textContent = text;
+
+  item.appendChild(meta);
+  item.appendChild(content);
+  ui.transcript.appendChild(item);
+  item.scrollIntoView({ behavior: "smooth", block: "nearest" });
 }
+
+// ==========================================================================
+// Observability & Latency Waterfall
+// ==========================================================================
+
+function recordPartialEvent(event) {
+  const utteranceId = event.utteranceId;
+  if (!utteranceId || runtime.firstPartialMs.has(utteranceId)) return;
+  runtime.firstPartialMs.set(utteranceId, performance.now());
+}
+
+function recordFinalEvent(event) {
+  const utteranceId = event.utteranceId;
+  const receivedAt = performance.now();
+  const trace = runtime.traces.get(utteranceId) || { utteranceId };
+  trace.text = event.text || trace.text;
+  trace.metrics = mergeObjects(trace.metrics || {}, event.metrics || {});
+  trace.browser = trace.browser || {};
+  trace.browser.receivedAtMs = receivedAt;
+
+  if (runtime.manualCommitAt !== null) {
+    trace.browser.manualCommitLagMs = roundMetric(Math.max(0, receivedAt - runtime.manualCommitAt));
+    runtime.manualCommitAt = null;
+  }
+
+  const firstPartialAt = runtime.firstPartialMs.get(utteranceId);
+  if (firstPartialAt) {
+    trace.browser.finalAfterPartialMs = roundMetric(Math.max(0, receivedAt - firstPartialAt));
+  }
+
+  runtime.traces.set(utteranceId, trace);
+  compileObservation(trace);
+  renderObservability();
+
+  // Send ACK over WebSocket
+  if (runtime.socket && runtime.socket.readyState === WebSocket.OPEN) {
+    runtime.socket.send(
+      JSON.stringify({
+        type: "client.result_ack",
+        sessionId: runtime.session?.sessionId,
+        utteranceId,
+        eventType: "asr.final",
+        seq: event.seq,
+      })
+    );
+  }
+}
+
+function recordTraceUpdate(event) {
+  const utteranceId = event.utteranceId;
+  if (!utteranceId) return;
+  const trace = runtime.traces.get(utteranceId) || { utteranceId };
+  trace.metrics = mergeObjects(trace.metrics || {}, event.metrics || {});
+  runtime.traces.set(utteranceId, trace);
+  compileObservation(trace);
+  renderObservability();
+}
+
+function compileObservation(trace) {
+  const metrics = trace.metrics || {};
+  const bridge = metrics.bridge || {};
+  const agora = metrics.agora || {};
+  const vps = metrics.vps || {};
+  const browser = trace.browser || {};
+
+  const asrTotal = asFiniteNumber(bridge.asrTotalMs);
+  const endpoint = asFiniteNumber(bridge.endpointMs);
+  const network = asFiniteNumber(agora.networkTransportDelayMs) || 0;
+  const jitter = asFiniteNumber(agora.jitterBufferDelayMs) || 0;
+  const vpsRelay = asFiniteNumber(vps.relayQueueMs) || 0;
+
+  let totalEstimated = null;
+  if (asrTotal !== null) {
+    totalEstimated = asrTotal + (endpoint || 0) + network + jitter + vpsRelay;
+  }
+
+  const observation = {
+    utteranceId: trace.utteranceId,
+    text: trace.text,
+    totalEstimatedMs: roundMetric(totalEstimated),
+    stages: {
+      agoraNetworkMs: roundMetric(network + jitter),
+      endpointMs: roundMetric(endpoint),
+      asrInferenceMs: roundMetric(asrTotal),
+      vpsRelayMs: roundMetric(vpsRelay),
+    },
+    raw: trace,
+  };
+
+  const existingIdx = runtime.observations.findIndex((o) => o.utteranceId === trace.utteranceId);
+  if (existingIdx >= 0) {
+    runtime.observations[existingIdx] = observation;
+  } else {
+    runtime.observations.push(observation);
+  }
+}
+
+function renderObservability() {
+  const count = runtime.observations.length;
+  ui.sampleCount.textContent = String(count);
+  ui.exportMetrics.disabled = count === 0;
+  ui.clearMetrics.disabled = count === 0;
+
+  if (count === 0) {
+    ui.latestLatency.textContent = "—";
+    ui.p50Latency.textContent = "—";
+    ui.p95Latency.textContent = "—";
+    ui.traceText.textContent = "尚未收到最终识别结果。";
+    ui.traceStages.innerHTML = '<p class="trace-empty">开始识别并产生语音后，此处将呈现各链路阶段的耗时分解。</p>';
+    return;
+  }
+
+  const latencies = runtime.observations.map((o) => o.totalEstimatedMs).filter((v) => v !== null);
+  const latest = runtime.observations[count - 1];
+
+  ui.latestLatency.textContent = formatMs(latest.totalEstimatedMs);
+  ui.p50Latency.textContent = formatMs(percentile(latencies, 0.5));
+  ui.p95Latency.textContent = formatMs(percentile(latencies, 0.95));
+  ui.traceText.textContent = latest.text || "—";
+
+  if (runtime.networkQuality) {
+    ui.networkSummary.textContent = `Agora 网络质量: 上行等级 ${runtime.networkQuality.uplinkNetworkQuality || "—"}, 下行等级 ${runtime.networkQuality.downlinkNetworkQuality || "—"}`;
+  }
+
+  // Render waterfall
+  const stages = latest.stages;
+  const stageDefs = [
+    { key: "agoraNetworkMs", label: "Agora 网络传输", val: stages.agoraNetworkMs || 0 },
+    { key: "endpointMs", label: "Bridge 断句端点", val: stages.endpointMs || 0 },
+    { key: "asrInferenceMs", label: "OminiX ASR 推理", val: stages.asrInferenceMs || 0 },
+    { key: "vpsRelayMs", label: "VPS 转发及交付", val: stages.vpsRelayMs || 0 },
+  ];
+
+  const total = stageDefs.reduce((acc, s) => acc + s.val, 0) || 1;
+  ui.traceStages.innerHTML = stageDefs
+    .map((s) => {
+      const pct = Math.max(3, Math.round((s.val / total) * 100));
+      return `
+        <div class="stage-row">
+          <span style="min-width: 110px;">${s.label}</span>
+          <div class="stage-bar-bg"><div class="stage-bar-fill" style="width: ${pct}%;"></div></div>
+          <span style="min-width: 50px; text-align: right; font-family: var(--font-mono);">${formatMs(s.val)}</span>
+        </div>
+      `;
+    })
+    .join("");
+}
+
+function exportObservations() {
+  const jsonStr = JSON.stringify(runtime.observations, null, 2);
+  const blob = new Blob([jsonStr], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `octos-asr-trace-${new Date().toISOString().slice(0, 19).replace(/:/g, "-")}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function clearObservations() {
+  runtime.observations = [];
+  runtime.traces.clear();
+  runtime.firstPartialMs.clear();
+  renderObservability();
+  log("已清空追踪监控数据");
+}
+
+// ==========================================================================
+// Agora RTC & Audio Capture
+// ==========================================================================
 
 async function joinAgora(config) {
   if (!window.AgoraRTC) throw new Error("Agora Web SDK 加载失败");
   window.AgoraRTC.setLogLevel(2);
   const client = window.AgoraRTC.createClient({ mode: "live", codec: "vp8" });
+
   client.on("network-quality", (quality) => {
     runtime.networkQuality = quality;
   });
+
   client.on("user-published", async (user, mediaType) => {
     if (mediaType !== "audio") return;
     await client.subscribe(user, mediaType);
     user.audioTrack?.play();
-    log("已订阅远端音频(TTS 播放)", { uid: user.uid });
+    log("已订阅远端音频 (TTS 实时收听)", { uid: user.uid });
   });
+
   await client.setClientRole("host");
   await client.join(config.appId, config.channel, config.token, config.uid);
+
   const microphone = await window.AgoraRTC.createMicrophoneAudioTrack({
     encoderConfig: "speech_standard",
     AEC: true,
     ANS: true,
     AGC: true,
   });
+
   await client.publish([microphone]);
   runtime.rtcClient = client;
   runtime.microphone = microphone;
   setDot(ui.agoraDot, "on");
   startMeter();
-  log("已加入 Agora RTC 并发布麦克风", { channel: config.channel, uid: config.uid });
+  log("已加入 Agora RTC 并发布麦克风音轨", { channel: config.channel, uid: config.uid });
 }
 
 function startMeter() {
@@ -567,43 +738,51 @@ function startMeter() {
     observeSpeechLevel(volume, performance.now());
     ui.levelBars.forEach((bar, index) => {
       const threshold = index / ui.levelBars.length;
-      bar.style.height = `${5 + (volume > threshold ? 17 * Math.min(1, volume + 0.25) : 0)}px`;
+      bar.style.height = `${4 + (volume > threshold ? 18 * Math.min(1, volume + 0.25) : 0)}px`;
     });
   }, METER_INTERVAL_MS);
 }
 
+// ==========================================================================
+// Session Actions
+// ==========================================================================
+
 async function start() {
-  runtime.accessToken = ui.accessKey.value.trim();
+  runtime.accessToken = localStorage.getItem(STORAGE_KEY) || ui.accessKey.value.trim();
   if (runtime.accessProtected && !runtime.accessToken) {
-    appendFinal("⚠ 请先填写管理员提供的访问密钥。");
-    ui.accessKey.focus();
+    openTokenModal();
+    appendFinal("⚠ 请先在弹窗中配置管理员提供的团队访问密钥。");
     return;
   }
-  if (runtime.accessToken) sessionStorage.setItem("asrAccessToken", runtime.accessToken);
+
   ui.start.disabled = true;
   runtime.speech = createSpeechState();
   runtime.manualCommitAt = null;
   runtime.networkQuality = null;
-  setSessionState("正在启动");
+  setSessionState("正在启动...");
   setDot(ui.agoraDot, "busy");
+
   try {
     const session = await api("/api/v1/sessions", { method: "POST", body: "{}" });
     runtime.session = session;
     ui.sessionId.textContent = session.sessionId.slice(0, 8);
     ui.sessionId.title = session.sessionId;
+
     openEventSocket(session.eventsWsPath);
+
     if (session.demoMode) {
       setDot(ui.agoraDot, "on");
       log("MOCK 模式：跳过浏览器麦克风与 Agora 入会");
     } else {
       await joinAgora(session.agora);
     }
+
     setRunning(true);
   } catch (error) {
-    log("启动失败", { error: error.message });
-    appendFinal(`⚠ 启动失败：${error.message}`);
+    log("启动会话失败", { error: error.message });
+    appendFinal(`⚠ 启动失败: ${error.message}`);
     setSessionState("启动失败");
-    setDot(ui.agoraDot, "");
+    setDot(ui.agoraDot, "error");
     if (runtime.session) await stop();
     else setRunning(false);
   }
@@ -614,7 +793,7 @@ async function toggleMute() {
   if (runtime.microphone) await runtime.microphone.setEnabled(!runtime.muted);
   ui.mute.textContent = runtime.muted ? "取消静音" : "静音";
   ui.level.classList.toggle("active", !runtime.muted);
-  log(runtime.muted ? "麦克风已静音" : "麦克风已恢复");
+  log(runtime.muted ? "麦克风已静音" : "麦克风已取消静音");
 }
 
 async function commit() {
@@ -626,7 +805,7 @@ async function commit() {
       method: "POST",
       body: "{}",
     });
-    log("已请求立即断句");
+    log("已触发手动断句");
   } catch (error) {
     if (runtime.manualCommitAt === committedAt) runtime.manualCommitAt = null;
     log("断句请求失败", { error: error.message });
@@ -636,15 +815,36 @@ async function commit() {
 async function speak() {
   const text = ui.ttsText.value.trim();
   if (!runtime.session || !text) return;
+
+  let voice = ui.ttsVoiceSelect.value;
+  if (voice === "custom") {
+    voice = ui.ttsVoiceCustom.value.trim();
+  }
+
+  const speed = parseFloat(ui.ttsSpeed.value) || 1.0;
+  const instruct = ui.ttsInstruct.value.trim();
+
+  const payload = { text };
+  if (voice) payload.voice = voice;
+  if (speed !== 1.0) payload.speed = speed;
+  if (instruct) payload.instruct = instruct;
+
   try {
+    if (ui.ttsStatusText) {
+      ui.ttsStatusText.textContent = "已发送朗读请求...";
+      ui.ttsStatusText.style.color = "#38bdf8";
+    }
     await api(`/api/v1/sessions/${runtime.session.sessionId}/speak`, {
       method: "POST",
-      body: JSON.stringify({ text }),
+      body: JSON.stringify(payload),
     });
-    log("已请求朗读", { characters: text.length });
-    ui.ttsText.value = "";
+    log("已请求 TTS 朗读", payload);
   } catch (error) {
-    log("朗读请求失败", { error: error.message });
+    log("TTS 朗读失败", { error: error.message });
+    if (ui.ttsStatusText) {
+      ui.ttsStatusText.textContent = `朗读错误: ${error.message}`;
+      ui.ttsStatusText.style.color = "#f87171";
+    }
   }
 }
 
@@ -654,7 +854,7 @@ async function stop() {
     try {
       await api(`/api/v1/sessions/${session.sessionId}`, { method: "DELETE" });
     } catch (error) {
-      log("结束会话请求失败", { error: error.message });
+      log("结束会话失败", { error: error.message });
     }
   }
   await cleanupLocal();
@@ -675,9 +875,10 @@ async function cleanupLocal() {
   runtime.speech = createSpeechState();
   runtime.networkQuality = null;
   runtime.manualCommitAt = null;
+
   ui.mute.textContent = "静音";
   ui.level.classList.remove("active");
-  ui.levelBars.forEach((bar) => { bar.style.height = "5px"; });
+  ui.levelBars.forEach((bar) => { bar.style.height = "4px"; });
   ui.partial.textContent = "";
   ui.sessionId.textContent = "—";
   setSessionState("待机");
@@ -687,27 +888,28 @@ async function cleanupLocal() {
   refreshStatus();
 }
 
+// ==========================================================================
+// Event Listeners & Boot
+// ==========================================================================
+
 ui.start.addEventListener("click", start);
-ui.accessKey.addEventListener("change", () => {
-  runtime.accessToken = ui.accessKey.value.trim();
-  if (runtime.accessToken) sessionStorage.setItem("asrAccessToken", runtime.accessToken);
-  else sessionStorage.removeItem("asrAccessToken");
-});
 ui.mute.addEventListener("click", toggleMute);
 ui.commit.addEventListener("click", commit);
 ui.speak.addEventListener("click", speak);
 ui.ttsText.addEventListener("keydown", (event) => {
-  if (event.key === "Enter") speak();
+  if (event.key === "Enter" && !event.shiftKey) {
+    event.preventDefault();
+    speak();
+  }
 });
 ui.stop.addEventListener("click", stop);
 ui.exportMetrics.addEventListener("click", exportObservations);
 ui.clearMetrics.addEventListener("click", clearObservations);
+
 window.addEventListener("pagehide", () => {
   runtime.microphone?.close();
   if (!runtime.session) return;
-  const headers = runtime.accessToken
-    ? { Authorization: `Bearer ${runtime.accessToken}` }
-    : {};
+  const headers = runtime.accessToken ? { Authorization: `Bearer ${runtime.accessToken}` } : {};
   fetch(`/api/v1/sessions/${runtime.session.sessionId}`, {
     method: "DELETE",
     headers,
@@ -715,6 +917,8 @@ window.addEventListener("pagehide", () => {
   }).catch(() => {});
 });
 
+// Initial boot
+handleHashChange();
 refreshStatus();
 renderObservability();
 setInterval(refreshStatus, 5000);

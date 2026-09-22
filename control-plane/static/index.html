@@ -4,141 +4,886 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="color-scheme" content="dark" />
-    <title>Agora × OminiX 实时 ASR</title>
+    <title>Octos Audio API · 实时语音转写与合成服务</title>
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
-    <div class="glow glow-one"></div>
-    <div class="glow glow-two"></div>
-    <main class="shell">
-      <header class="hero">
-        <div>
-          <p class="eyebrow">PRIVATE ASR · PUBLIC RTC</p>
-          <h1>Agora × OminiX</h1>
-          <p class="lede">浏览器只接入声网 RTC；内网桥接器拿到 PCM 后调用本地 ASR，识别结果经轻量控制面返回。</p>
+    <!-- Top Navigation Bar -->
+    <header class="navbar">
+      <div class="nav-container">
+        <div class="nav-brand">
+          <div class="brand-icon">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/>
+              <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+              <line x1="12" y1="19" x2="12" y2="22"/>
+            </svg>
+          </div>
+          <span class="brand-title">OCTOS AUDIO API</span>
+          <span class="brand-badge">RTC v1.0</span>
         </div>
-        <div id="modeBadge" class="mode-badge">检测模式…</div>
-      </header>
 
-      <section class="topology" aria-label="链路状态">
-        <div class="node">
-          <span class="status-dot" id="browserDot"></span>
-          <div><strong>浏览器</strong><small>Agora Web SDK</small></div>
+        <nav class="nav-tabs" role="tablist">
+          <button class="nav-tab active" data-tab="home" role="tab" aria-selected="true">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+            服务概览
+          </button>
+          <button class="nav-tab" data-tab="docs" role="tab" aria-selected="false">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1-2.5-2.5Z"/><path d="M6 6h10"/><path d="M6 10h10"/></svg>
+            开发文档
+          </button>
+          <button class="nav-tab" data-tab="playground" role="tab" aria-selected="false">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+            Playground 演练场
+          </button>
+        </nav>
+
+        <div class="nav-actions">
+          <div class="bridge-status-pill" id="navBridgeStatus">
+            <span class="status-dot" id="navBridgeDot"></span>
+            <span id="navBridgeLabel">检测 Bridge...</span>
+          </div>
+          <button class="token-btn" id="tokenConfigBtn" title="配置访问密钥">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+            <span id="tokenStatusText">配置密钥</span>
+          </button>
         </div>
-        <span class="connector"></span>
-        <div class="node">
-          <span class="status-dot" id="agoraDot"></span>
-          <div><strong>Agora RTC</strong><small>实时音频传输</small></div>
+      </div>
+    </header>
+
+    <!-- Main Container with Tab Views -->
+    <main class="app-main">
+
+      <!-- ========================================================================= -->
+      <!-- TAB 1: HOME (OVERVIEW) -->
+      <!-- ========================================================================= -->
+      <section id="tab-home" class="tab-pane active" role="tabpanel">
+        <div class="hero-section">
+          <div class="hero-content">
+            <div class="hero-tag">ENTERPRISE STREAMING AUDIO INFRASTRUCTURE</div>
+            <h1 class="hero-headline">低延迟实时语音转写与合成 API</h1>
+            <p class="hero-subtext">
+              结合 Agora SD-RTN 全球实时传输网络与 OminiX (Qwen3-ASR / Qwen3-TTS) 私有算力。
+              专为实时人机语音对话、长语音流式听写与即时播报打造，具备全双工低延迟、零入站公网暴露与完备的可观测性。
+            </p>
+            <div class="hero-cta-group">
+              <button class="btn btn-primary" onclick="switchTab('playground')">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                在 Playground 调试
+              </button>
+              <button class="btn btn-secondary" onclick="switchTab('docs')">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
+                查阅 API 参考
+              </button>
+            </div>
+          </div>
+
+          <div class="hero-stats-grid">
+            <div class="stat-card">
+              <div class="stat-value">&lt; 200 ms</div>
+              <div class="stat-label">P50 端到端转写延时</div>
+              <div class="stat-desc">VAD 精准切句，分段即时送入模型推理</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-value">16k / 48k</div>
+              <div class="stat-label">广播级全双工音频</div>
+              <div class="stat-desc">16kHz 进站识别，48kHz 升采样高清语音出站</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-value">Zero Inbound</div>
+              <div class="stat-label">内网安全架构</div>
+              <div class="stat-desc">内网 Bridge 仅发起出站连接，模型资产不暴露公网</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-value">Qwen3 模型</div>
+              <div class="stat-label">100% 私有化算力</div>
+              <div class="stat-desc">Qwen3-ASR + Qwen3-TTS 定制多音色低随机度生成</div>
+            </div>
+          </div>
         </div>
-        <span class="connector"></span>
-        <div class="node">
-          <span class="status-dot" id="bridgeDot"></span>
-          <div><strong>内网 Bridge</strong><small>16 kHz PCM</small></div>
+
+        <!-- Architecture Section -->
+        <div class="section-container">
+          <div class="section-header">
+            <h2 class="section-title">全链路系统架构</h2>
+            <p class="section-subtitle">音频流经 Agora SD-RTN 传输保证抗丢包与低延时，信令与转写文本经 VPS 轻量控制面毫秒级转发。</p>
+          </div>
+
+          <div class="arch-diagram">
+            <div class="arch-node">
+              <div class="node-icon">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+              </div>
+              <div class="node-title">客户端 / 业务前端</div>
+              <div class="node-desc">Agora Web/iOS/Android SDK 推流<br>WebSocket 订阅文本</div>
+            </div>
+
+            <div class="arch-flow">
+              <div class="flow-line">
+                <span class="flow-label">RTC 音频 (Opus)</span>
+              </div>
+              <div class="flow-line reverse">
+                <span class="flow-label">WebSocket (JSON)</span>
+              </div>
+            </div>
+
+            <div class="arch-node highlight">
+              <div class="node-icon">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/></svg>
+              </div>
+              <div class="node-title">Agora SD-RTN & VPS 控制面</div>
+              <div class="node-desc">Agora 边缘全球路由<br>Rust Salvo 鉴权与会话分发</div>
+            </div>
+
+            <div class="arch-flow">
+              <div class="flow-line">
+                <span class="flow-label">16kHz PCM</span>
+              </div>
+              <div class="flow-line reverse">
+                <span class="flow-label">出站 WSS 文本</span>
+              </div>
+            </div>
+
+            <div class="arch-node">
+              <div class="node-icon">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><line x1="9" y1="1" x2="9" y2="4"/><line x1="15" y1="1" x2="15" y2="4"/><line x1="9" y1="20" x2="9" y2="23"/><line x1="15" y1="20" x2="15" y2="23"/><line x1="20" y1="9" x2="23" y2="9"/><line x1="20" y1="14" x2="23" y2="14"/><line x1="1" y1="9" x2="4" y2="9"/><line x1="1" y1="14" x2="4" y2="14"/></svg>
+              </div>
+              <div class="node-title">内网 Bridge & OminiX</div>
+              <div class="node-desc">Agora Server SDK 接收<br>Qwen3-ASR & TTS 本地推理</div>
+            </div>
+          </div>
         </div>
-        <span class="connector"></span>
-        <div class="node">
-          <span class="status-dot" id="asrDot"></span>
-          <div><strong>Qwen3-ASR</strong><small>OminiX 本地推理</small></div>
+
+        <!-- Quick API Endpoints Table -->
+        <div class="section-container">
+          <div class="section-header">
+            <h2 class="section-title">核心 API 端点速览</h2>
+            <p class="section-subtitle">所有受保护接口通过标准 HTTP Bearer Token 鉴权。</p>
+          </div>
+
+          <div class="table-container">
+            <table class="api-table">
+              <thead>
+                <tr>
+                  <th style="width: 100px;">方法</th>
+                  <th style="width: 280px;">端点路径</th>
+                  <th>功能说明</th>
+                  <th style="width: 160px;">鉴权方式</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><span class="method-badge post">POST</span></td>
+                  <td><code>/api/v1/sessions</code></td>
+                  <td>创建实时语音会话，签发 Agora RTC 临时凭证与专属 WebSocket 路由</td>
+                  <td><span class="auth-tag">Bearer Token</span></td>
+                </tr>
+                <tr>
+                  <td><span class="method-badge ws">WS</span></td>
+                  <td><code>/ws/client/{sessionId}</code></td>
+                  <td>订阅实时转写事件流（<code>asr.partial</code> 打字机片段、<code>asr.final</code> 最终断句）</td>
+                  <td><span class="auth-tag">Session Cookie</span></td>
+                </tr>
+                <tr>
+                  <td><span class="method-badge post">POST</span></td>
+                  <td><code>/api/v1/sessions/{id}/speak</code></td>
+                  <td>在频道内实时朗读文字（TTS），支持指定音色、语速与情感 Prompt</td>
+                  <td><span class="auth-tag">Bearer / Cookie</span></td>
+                </tr>
+                <tr>
+                  <td><span class="method-badge post">POST</span></td>
+                  <td><code>/api/v1/sessions/{id}/commit</code></td>
+                  <td>强制立即截断并提交当前正在识别的话语（跳过静音检测）</td>
+                  <td><span class="auth-tag">Bearer / Cookie</span></td>
+                </tr>
+                <tr>
+                  <td><span class="method-badge delete">DELETE</span></td>
+                  <td><code>/api/v1/sessions/{id}</code></td>
+                  <td>正常结束会话，释放 Agora 频道与 Bridge 资源</td>
+                  <td><span class="auth-tag">Bearer / Cookie</span></td>
+                </tr>
+                <tr>
+                  <td><span class="method-badge get">GET</span></td>
+                  <td><code>/api/v1/status</code></td>
+                  <td>获取服务运行状态、Bridge 连通性与当前并发会话容量</td>
+                  <td><span class="auth-tag public">Public</span></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
         </div>
       </section>
 
-      <section class="workspace">
-        <article class="panel transcript-panel">
-          <div class="panel-head">
-            <div>
-              <p class="panel-kicker">LIVE TRANSCRIPT</p>
-              <h2>实时转写</h2>
+      <!-- ========================================================================= -->
+      <!-- TAB 2: DOCUMENTATION (DOCS) -->
+      <!-- ========================================================================= -->
+      <section id="tab-docs" class="tab-pane" role="tabpanel">
+        <div class="docs-layout">
+          <!-- Sidebar Navigation -->
+          <aside class="docs-sidebar">
+            <div class="sidebar-group">
+              <div class="sidebar-heading">快速入门</div>
+              <a href="#doc-overview" class="sidebar-link active">概述与原则</a>
+              <a href="#doc-auth" class="sidebar-link">鉴权与安全</a>
+              <a href="#doc-quickstart" class="sidebar-link">3 步集成指引</a>
             </div>
-            <div class="audio-level" aria-label="麦克风音量">
-              <i></i><i></i><i></i><i></i><i></i><i></i>
+            <div class="sidebar-group">
+              <div class="sidebar-heading">实时语音流接口</div>
+              <a href="#doc-create-session" class="sidebar-link">创建会话 (POST /sessions)</a>
+              <a href="#doc-agora-stream" class="sidebar-link">Agora RTC 推流接入</a>
+              <a href="#doc-ws-events" class="sidebar-link">WebSocket 事件流协议</a>
+              <a href="#doc-speak" class="sidebar-link">语音合成 (POST /speak)</a>
+              <a href="#doc-lifecycle" class="sidebar-link">断句与会话释放</a>
             </div>
-          </div>
-          <div id="transcript" class="transcript" aria-live="polite">
-            <p class="placeholder">点击“开始识别”，然后对着麦克风讲话。</p>
-          </div>
-          <p id="partial" class="partial"></p>
-        </article>
+            <div class="sidebar-group">
+              <div class="sidebar-heading">参考与诊断</div>
+              <a href="#doc-status" class="sidebar-link">系统状态 (GET /status)</a>
+              <a href="#doc-errors" class="sidebar-link">错误码字典</a>
+            </div>
+          </aside>
 
-        <aside class="panel control-panel">
-          <p class="panel-kicker">SESSION CONTROL</p>
-          <h2>会话控制</h2>
-          <label class="access-field" id="accessField">
-            <span>访问密钥</span>
+          <!-- Main Documentation Content -->
+          <article class="docs-content">
+
+            <!-- Overview -->
+            <section id="doc-overview" class="doc-section">
+              <div class="doc-eyebrow">GUIDE · OVERVIEW</div>
+              <h1 class="doc-title">系统设计与调用机制</h1>
+              <p>
+                Octos Audio API 是一套面向企业团队的<strong>全双工低延迟实时语音服务</strong>。服务由运行于云端的<strong>控制面 (Control Plane)</strong> 和部署在本地私有算力环境的<strong>桥接器 (Bridge)</strong> 协同提供。
+              </p>
+              <div class="doc-callout info">
+                <strong>为什么不是传统的文件上传接口？</strong>
+                传统 ASR/TTS 接口要求客户端等待录音结束并将整个 WAV/MP3 文件 POST 上传，端到端延迟通常在 2~6 秒以上。
+                本项目采用<strong>「RTC 专网推流 + WebSocket 文本流」</strong>架构，说话过程实时切片并发推理，在用户停顿后 <strong>200ms 内</strong>即可完成最终断句。
+              </div>
+            </section>
+
+            <!-- Authentication -->
+            <section id="doc-auth" class="doc-section">
+              <div class="doc-eyebrow">GUIDE · AUTHENTICATION</div>
+              <h2 class="doc-subtitle">鉴权认证规范</h2>
+              <p>
+                系统采用半公开服务机制（团队共用主凭证）。所有写入与会话级请求均需在 HTTP Header 中携带 Bearer Token：
+              </p>
+              <div class="code-block-wrapper">
+                <div class="code-header">
+                  <span class="code-title">HTTP Header</span>
+                  <button class="copy-btn" data-clipboard="Authorization: Bearer <CLIENT_ACCESS_TOKEN>">复制</button>
+                </div>
+                <pre class="code-pre"><code>Authorization: Bearer &lt;CLIENT_ACCESS_TOKEN&gt;</code></pre>
+              </div>
+              <p class="text-secondary">
+                当浏览器创建会话成功后，控制面会自动签发限定路径的 HttpOnly <code>Session Cookie</code>，使后续的 WebSocket 连接无需在 URL 参数中暴露 Token。
+              </p>
+            </section>
+
+            <!-- Quickstart -->
+            <section id="doc-quickstart" class="doc-section">
+              <div class="doc-eyebrow">GUIDE · QUICKSTART</div>
+              <h2 class="doc-subtitle">快速开始示例</h2>
+              <p>只需发起一个 POST 请求创建会话，即可获得 Agora 频道信息及 WebSocket 订阅地址：</p>
+
+              <div class="tabs-code-wrapper">
+                <div class="code-tabs-nav">
+                  <button class="code-tab active" data-lang="curl">cURL</button>
+                  <button class="code-tab" data-lang="python">Python</button>
+                  <button class="code-tab" data-lang="javascript">JavaScript</button>
+                </div>
+
+                <div class="code-tab-pane active" data-lang="curl">
+                  <div class="code-block-wrapper">
+                    <div class="code-header">
+                      <span class="code-title">Terminal / Bash</span>
+                      <button class="copy-btn" data-clipboard="curl -X POST https://asr.example.com/api/v1/sessions \
+  -H &quot;Authorization: Bearer YOUR_ACCESS_TOKEN&quot; \
+  -H &quot;Content-Type: application/json&quot; \
+  -d '{}'">复制</button>
+                    </div>
+                    <pre class="code-pre"><code>curl -X POST https://asr.example.com/api/v1/sessions \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{}'</code></pre>
+                  </div>
+                </div>
+
+                <div class="code-tab-pane" data-lang="python">
+                  <div class="code-block-wrapper">
+                    <div class="code-header">
+                      <span class="code-title">Python 3 (httpx / requests)</span>
+                      <button class="copy-btn" data-clipboard="import httpx
+
+BASE_URL = &quot;https://asr.example.com&quot;
+TOKEN = &quot;YOUR_ACCESS_TOKEN&quot;
+
+headers = {&quot;Authorization&quot;: f&quot;Bearer {TOKEN}&quot;}
+response = httpx.post(f&quot;{BASE_URL}/api/v1/sessions&quot;, headers=headers, json={})
+session = response.json()
+
+print(f&quot;Session ID: {session['sessionId']}&quot;)
+print(f&quot;Agora Channel: {session['agora']['channel']}&quot;)
+print(f&quot;WS Path: {session['eventsWsPath']}&quot;)">复制</button>
+                    </div>
+                    <pre class="code-pre"><code>import httpx
+
+BASE_URL = "https://asr.example.com"
+TOKEN = "YOUR_ACCESS_TOKEN"
+
+headers = {"Authorization": f"Bearer {TOKEN}"}
+response = httpx.post(f"{BASE_URL}/api/v1/sessions", headers=headers, json={})
+session = response.json()
+
+print(f"Session ID: {session['sessionId']}")
+print(f"Agora Channel: {session['agora']['channel']}")
+print(f"WS Path: {session['eventsWsPath']}")</code></pre>
+                  </div>
+                </div>
+
+                <div class="code-tab-pane" data-lang="javascript">
+                  <div class="code-block-wrapper">
+                    <div class="code-header">
+                      <span class="code-title">Node.js / Browser (Fetch)</span>
+                      <button class="copy-btn" data-clipboard="const res = await fetch(&quot;https://asr.example.com/api/v1/sessions&quot;, {
+  method: &quot;POST&quot;,
+  headers: {
+    &quot;Authorization&quot;: `Bearer ${YOUR_ACCESS_TOKEN}`,
+    &quot;Content-Type&quot;: &quot;application/json&quot;
+  },
+  body: &quot;{}&quot;
+});
+const session = await res.json();
+console.log(&quot;Created session:&quot;, session.sessionId);">复制</button>
+                    </div>
+                    <pre class="code-pre"><code>const res = await fetch("https://asr.example.com/api/v1/sessions", {
+  method: "POST",
+  headers: {
+    "Authorization": `Bearer ${YOUR_ACCESS_TOKEN}`,
+    "Content-Type": "application/json"
+  },
+  body: "{}"
+});
+const session = await res.json();
+console.log("Created session:", session.sessionId);</code></pre>
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            <!-- Create Session Detail -->
+            <section id="doc-create-session" class="doc-section">
+              <div class="doc-eyebrow">API REFERENCE</div>
+              <h2 class="doc-subtitle">创建会话 · POST /api/v1/sessions</h2>
+              <p>请求控制面初始化一个双向实时通信会话，动态签发 Agora AccessToken2 短期凭据。</p>
+
+              <h3 class="param-title">响应结果 (201 Created)</h3>
+              <div class="code-block-wrapper">
+                <div class="code-header">
+                  <span class="code-title">Response JSON</span>
+                  <button class="copy-btn" data-clipboard="{
+  &quot;sessionId&quot;: &quot;e7fa699f-3507-4e6a-a006-25f0e9b2512a&quot;,
+  &quot;state&quot;: &quot;starting&quot;,
+  &quot;expiresAtMs&quot;: 1727025600000,
+  &quot;eventsWsPath&quot;: &quot;/ws/client/e7fa699f-3507-4e6a-a006-25f0e9b2512a&quot;,
+  &quot;demoMode&quot;: false,
+  &quot;agora&quot;: {
+    &quot;appId&quot;: &quot;99f8...&quot;,
+    &quot;channel&quot;: &quot;asr-8bf2a0...&quot;,
+    &quot;uid&quot;: 1001,
+    &quot;token&quot;: &quot;007eJxTY...&quot;
+  }
+}">复制</button>
+                </div>
+                <pre class="code-pre"><code>{
+  "sessionId": "e7fa699f-3507-4e6a-a006-25f0e9b2512a",
+  "state": "starting",
+  "expiresAtMs": 1727025600000,
+  "eventsWsPath": "/ws/client/e7fa699f-3507-4e6a-a006-25f0e9b2512a",
+  "demoMode": false,
+  "agora": {
+    "appId": "99f8...",
+    "channel": "asr-8bf2a0...",
+    "uid": 1001,
+    "token": "007eJxTY..."
+  }
+}</code></pre>
+              </div>
+            </section>
+
+            <!-- Agora RTC Audio Streaming -->
+            <section id="doc-agora-stream" class="doc-section">
+              <div class="doc-eyebrow">CLIENT INTEGRATION</div>
+              <h2 class="doc-subtitle">Agora RTC 音频推流与订阅</h2>
+              <p>
+                客户端引入声网 Web / Mobile SDK，入会并采集音频推送到 <code>agora.channel</code>。Bridge 会作为远端受众接收 16kHz PCM 进行 VAD 和 ASR。
+              </p>
+              <div class="code-block-wrapper">
+                <div class="code-header">
+                  <span class="code-title">JavaScript (AgoraRTC Web SDK)</span>
+                  <button class="copy-btn" data-clipboard="const client = AgoraRTC.createClient({ mode: 'live', codec: 'vp8' });
+await client.setClientRole('host');
+await client.join(agora.appId, agora.channel, agora.token, agora.uid);
+
+// 创建并发布麦克风音轨
+const mic = await AgoraRTC.createMicrophoneAudioTrack({
+  encoderConfig: 'speech_standard',
+  AEC: true, ANS: true, AGC: true
+});
+await client.publish([mic]);
+
+// 监听远端音频发布（用于实时收听 TTS 播报）
+client.on('user-published', async (user, mediaType) => {
+  if (mediaType === 'audio') {
+    await client.subscribe(user, mediaType);
+    user.audioTrack.play();
+  }
+});">复制</button>
+                </div>
+                <pre class="code-pre"><code>const client = AgoraRTC.createClient({ mode: 'live', codec: 'vp8' });
+await client.setClientRole('host');
+await client.join(agora.appId, agora.channel, agora.token, agora.uid);
+
+// 创建并发布麦克风音轨
+const mic = await AgoraRTC.createMicrophoneAudioTrack({
+  encoderConfig: 'speech_standard',
+  AEC: true, ANS: true, AGC: true
+});
+await client.publish([mic]);
+
+// 监听远端音频发布（用于实时收听 TTS 播报）
+client.on('user-published', async (user, mediaType) => {
+  if (mediaType === 'audio') {
+    await client.subscribe(user, mediaType);
+    user.audioTrack.play();
+  }
+});</code></pre>
+              </div>
+            </section>
+
+            <!-- WebSocket Events Specification -->
+            <section id="doc-ws-events" class="doc-section">
+              <div class="doc-eyebrow">EVENT PROTOCOL</div>
+              <h2 class="doc-subtitle">WebSocket 实时事件协议</h2>
+              <p>
+                连接 <code>wss://asr.example.com/ws/client/{sessionId}</code> 后，Bridge 将实时推送以下 JSON 事件：
+              </p>
+
+              <div class="events-accordion">
+                <div class="event-card">
+                  <div class="event-badge partial">asr.partial</div>
+                  <div class="event-desc">流式中间打字机片段。在用户讲话未停顿时持续高频推送。</div>
+                  <pre class="event-code"><code>{ "type": "asr.partial", "sessionId": "...", "utteranceId": "...:1", "seq": 3, "text": "形式上说赛题应该" }</code></pre>
+                </div>
+
+                <div class="event-card">
+                  <div class="event-badge final">asr.final</div>
+                  <div class="event-desc">最终断句结果。当 VAD 检测到静音或客户端主动 commit 时下发，附带各链路耗时 metrics。</div>
+                  <pre class="event-code"><code>{
+  "type": "asr.final",
+  "sessionId": "...",
+  "utteranceId": "...:1",
+  "seq": 4,
+  "text": "形式上说，赛题应该不需要百分之百做正确。",
+  "metrics": {
+    "bridge": { "asrTotalMs": 286.4, "endpointMs": 420.0 }
+  }
+}</code></pre>
+                </div>
+
+                <div class="event-card">
+                  <div class="event-badge tts">tts.started / tts.finished</div>
+                  <div class="event-desc">TTS 朗读生命周期事件。<code>tts.started</code> 包含文字字符数，播放完后下发 <code>tts.finished</code>。</div>
+                </div>
+              </div>
+            </section>
+
+            <!-- TTS Speak API Reference -->
+            <section id="doc-speak" class="doc-section">
+              <div class="doc-eyebrow">API REFERENCE</div>
+              <h2 class="doc-subtitle">语音合成播报 · POST /api/v1/sessions/{id}/speak</h2>
+              <p>在指定的活跃会话中触发 TTS 合成。音频直接推入 RTC 频道，用户无需轮询下载音频文件。</p>
+
+              <h3 class="param-title">请求体字段规范 (JSON)</h3>
+              <div class="table-container">
+                <table class="api-table">
+                  <thead>
+                    <tr>
+                      <th>参数名</th>
+                      <th>类型</th>
+                      <th>必填</th>
+                      <th>说明与限制</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td><code>text</code></td>
+                      <td>string</td>
+                      <td>是</td>
+                      <td>待朗读文本，1~500 个字符。支持中文标点与英文。</td>
+                    </tr>
+                    <tr>
+                      <td><code>voice</code></td>
+                      <td>string</td>
+                      <td>否</td>
+                      <td>音色标识。默认 <code>serena</code>。可选 <code>vivian</code>, <code>ryan</code>, <code>eric</code> 或自定义音色名。</td>
+                    </tr>
+                    <tr>
+                      <td><code>speed</code></td>
+                      <td>number</td>
+                      <td>否</td>
+                      <td>语速倍率。范围 <code>0.2 ~ 3.0</code>，默认 <code>1.0</code>。</td>
+                    </tr>
+                    <tr>
+                      <td><code>instruct</code></td>
+                      <td>string</td>
+                      <td>否</td>
+                      <td>语气或情感提示词，最多 200 字。如 <code>"温柔亲切地"</code>、<code>"非常严肃地"</code>。</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+
+              <div class="code-block-wrapper">
+                <div class="code-header">
+                  <span class="code-title">cURL 示例</span>
+                  <button class="copy-btn" data-clipboard="curl -X POST https://asr.example.com/api/v1/sessions/YOUR_SESSION_ID/speak \
+  -H &quot;Authorization: Bearer YOUR_ACCESS_TOKEN&quot; \
+  -H &quot;Content-Type: application/json&quot; \
+  -d '{
+    &quot;text&quot;: &quot;你好，我是 Octos 实时语音助手。很高兴与你交流！&quot;,
+    &quot;voice&quot;: &quot;serena&quot;,
+    &quot;speed&quot;: 1.0,
+    &quot;instruct&quot;: &quot;温柔亲切地&quot;
+  }'">复制</button>
+                </div>
+                <pre class="code-pre"><code>curl -X POST https://asr.example.com/api/v1/sessions/YOUR_SESSION_ID/speak \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "text": "你好，我是 Octos 实时语音助手。很高兴与你交流！",
+    "voice": "serena",
+    "speed": 1.0,
+    "instruct": "温柔亲切地"
+  }'</code></pre>
+              </div>
+            </section>
+
+            <!-- Session Lifecycle & Release -->
+            <section id="doc-lifecycle" class="doc-section">
+              <div class="doc-eyebrow">API REFERENCE</div>
+              <h2 class="doc-subtitle">断句与会话释放</h2>
+              <div class="method-row">
+                <span class="method-badge post">POST</span>
+                <code>/api/v1/sessions/{id}/commit</code>
+                <span class="method-desc">立即截断并提交当前话语。适用于客户端用户点击“发送”或松开按键的手动打断场景。</span>
+              </div>
+              <div class="method-row">
+                <span class="method-badge delete">DELETE</span>
+                <code>/api/v1/sessions/{id}</code>
+                <span class="method-desc">释放会话。建议在页面卸载（<code>pagehide</code>/<code>beforeunload</code>）或通话挂断时调用。</span>
+              </div>
+            </section>
+
+            <!-- Error Codes -->
+            <section id="doc-errors" class="doc-section">
+              <div class="doc-eyebrow">REFERENCE</div>
+              <h2 class="doc-subtitle">错误码字典</h2>
+              <div class="table-container">
+                <table class="api-table">
+                  <thead>
+                    <tr>
+                      <th style="width: 100px;">HTTP</th>
+                      <th style="width: 180px;">Error Code</th>
+                      <th>含义与处置建议</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td>401</td>
+                      <td><code>unauthorized</code></td>
+                      <td>缺少有效 Bearer Token 或 Token 错误。请确认已设置正确的团队访问密钥。</td>
+                    </tr>
+                    <tr>
+                      <td>409</td>
+                      <td><code>session_busy</code></td>
+                      <td>服务已达到最大并发承载上限（<code>SESSION_CAPACITY</code>）。请稍后再试或释放闲置会话。</td>
+                    </tr>
+                    <tr>
+                      <td>503</td>
+                      <td><code>bridge_offline</code></td>
+                      <td>内网 Bridge 处于离线状态。请联系管理员确保 Mac 上的 Bridge 与 OminiX 实例正常运行。</td>
+                    </tr>
+                    <tr>
+                      <td>400</td>
+                      <td><code>invalid_text</code> / <code>invalid_speed</code></td>
+                      <td>TTS 朗读文本超长（&gt;500字）或语速参数不在允许区间（0.2 ~ 3.0）。</td>
+                    </tr>
+                    <tr>
+                      <td>404</td>
+                      <td><code>session_not_found</code></td>
+                      <td>会话已超时注销或不存在。需重新调用 <code>POST /api/v1/sessions</code>。</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </section>
+
+          </article>
+        </div>
+      </section>
+
+      <!-- ========================================================================= -->
+      <!-- TAB 3: PLAYGROUND (INTERACTIVE WORKBENCH) -->
+      <!-- ========================================================================= -->
+      <section id="tab-playground" class="tab-pane" role="tabpanel">
+        
+        <!-- Playground Top Bar -->
+        <div class="pg-topbar">
+          <div class="pg-meta-item">
+            <span class="meta-label">会话状态</span>
+            <span class="meta-val badge-neutral" id="sessionState">待机</span>
+          </div>
+          <div class="pg-meta-item">
+            <span class="meta-label">会话 ID</span>
+            <span class="meta-val mono" id="sessionId">—</span>
+          </div>
+          <div class="pg-meta-item">
+            <span class="meta-label">Bridge 算力</span>
+            <span class="meta-val" id="bridgeState">检测中</span>
+          </div>
+          <div class="pg-meta-item">
+            <span class="meta-label">运行模式</span>
+            <span class="meta-val" id="modeBadge">RTC 真实推流</span>
+          </div>
+          <div class="pg-meta-actions">
+            <button id="startBtn" class="btn btn-primary btn-sm">开始识别</button>
+            <button id="muteBtn" class="btn btn-secondary btn-sm" disabled>静音</button>
+            <button id="commitBtn" class="btn btn-secondary btn-sm" disabled>立即断句</button>
+            <button id="stopBtn" class="btn btn-danger btn-sm" disabled>结束会话</button>
+          </div>
+        </div>
+
+        <!-- Node Topology Indicator -->
+        <div class="topology-bar">
+          <div class="topo-step">
+            <span class="status-dot" id="browserDot"></span>
+            <span>浏览器麦克风</span>
+          </div>
+          <span class="topo-line"></span>
+          <div class="topo-step">
+            <span class="status-dot" id="agoraDot"></span>
+            <span>Agora RTC 网络</span>
+          </div>
+          <span class="topo-line"></span>
+          <div class="topo-step">
+            <span class="status-dot" id="bridgeDot"></span>
+            <span>内网 Bridge</span>
+          </div>
+          <span class="topo-line"></span>
+          <div class="topo-step">
+            <span class="status-dot" id="asrDot"></span>
+            <span>OminiX Qwen3</span>
+          </div>
+        </div>
+
+        <!-- Two Column Main Workspace -->
+        <div class="pg-grid">
+          
+          <!-- Column 1: ASR Voice Input & Live Transcript -->
+          <div class="pg-card transcript-card">
+            <div class="card-header">
+              <div class="card-title-group">
+                <span class="card-tag">LIVE ASR</span>
+                <h3 class="card-title">实时语音转写</h3>
+              </div>
+              <div class="audio-level" aria-label="麦克风音量">
+                <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+              </div>
+            </div>
+
+            <div id="transcript" class="transcript-box" aria-live="polite">
+              <p class="placeholder">点击上方“开始识别”，允许麦克风权限后即可开始讲话...</p>
+            </div>
+            <div id="partial" class="partial-preview"></div>
+          </div>
+
+          <!-- Column 2: TTS Voice Output & Controls -->
+          <div class="pg-card tts-card">
+            <div class="card-header">
+              <div class="card-title-group">
+                <span class="card-tag">TTS SPEAK</span>
+                <h3 class="card-title">实时语音合成与频道播报</h3>
+              </div>
+            </div>
+
+            <div class="tts-form">
+              <div class="form-group">
+                <div class="form-label-row">
+                  <label for="ttsText">朗读文本</label>
+                  <div class="preset-pills">
+                    <span class="preset-pill" onclick="setTtsSample('日常')">日常问答</span>
+                    <span class="preset-pill" onclick="setTtsSample('技术')">技术报告</span>
+                    <span class="preset-pill" onclick="setTtsSample('比赛')">长句测试</span>
+                  </div>
+                </div>
+                <textarea
+                  id="ttsText"
+                  rows="3"
+                  maxlength="500"
+                  placeholder="输入要由 Bridge 朗读进 RTC 频道的文本..."
+                  disabled
+                ></textarea>
+              </div>
+
+              <!-- Voice & Speed Parameters -->
+              <div class="tts-params-row">
+                <div class="form-group flex-1">
+                  <label for="ttsVoiceSelect">音色选择 (Voice)</label>
+                  <select id="ttsVoiceSelect" class="form-select" disabled>
+                    <option value="serena" selected>serena (温暖知性女声 · 推荐)</option>
+                    <option value="vivian">vivian (清晰播音女声)</option>
+                    <option value="ryan">ryan (沉稳自然男声)</option>
+                    <option value="eric">eric (年轻活力男声)</option>
+                    <option value="custom">自定义音色...</option>
+                  </select>
+                  <input
+                    type="text"
+                    id="ttsVoiceCustom"
+                    class="form-input mt-2 hidden"
+                    placeholder="输入自定义音色 ID"
+                    maxlength="64"
+                  />
+                </div>
+
+                <div class="form-group flex-1">
+                  <div class="form-label-row">
+                    <label for="ttsSpeed">语速倍率 (Speed)</label>
+                    <span id="speedValueLabel" class="param-val-badge">1.0x</span>
+                  </div>
+                  <input
+                    type="range"
+                    id="ttsSpeed"
+                    class="form-range"
+                    min="0.5"
+                    max="2.0"
+                    step="0.1"
+                    value="1.0"
+                    disabled
+                  />
+                </div>
+              </div>
+
+              <div class="form-group">
+                <label for="ttsInstruct">语气 / 情感引导 Prompt (Instruct，可选)</label>
+                <input
+                  type="text"
+                  id="ttsInstruct"
+                  class="form-input"
+                  maxlength="100"
+                  placeholder="如：温柔地、严肃地、欢快开朗地..."
+                  disabled
+                />
+              </div>
+
+              <div class="tts-submit-row">
+                <button id="speakBtn" class="btn btn-secondary w-full" disabled>
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg>
+                  朗读到频道 (Speak)
+                </button>
+              </div>
+
+              <div class="tts-status-bar" id="ttsStatusBar">
+                <span id="ttsStatusText">TTS 就绪</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Latency Observability Panel -->
+        <div class="pg-card observability-card">
+          <div class="card-header">
+            <div class="card-title-group">
+              <span class="card-tag">TRACE & METRICS</span>
+              <h3 class="card-title">端到端延时追踪观测</h3>
+            </div>
+            <div class="obs-actions">
+              <button id="exportMetricsBtn" class="btn btn-outline btn-sm" disabled>导出 Trace JSON</button>
+              <button id="clearMetricsBtn" class="btn btn-outline btn-sm" disabled>清空数据</button>
+            </div>
+          </div>
+
+          <div class="metrics-summary-row">
+            <div class="metric-box">
+              <div class="metric-title">最新一句延时估算</div>
+              <div class="metric-num" id="latestLatency">—</div>
+            </div>
+            <div class="metric-box">
+              <div class="metric-title">P50 延时</div>
+              <div class="metric-num" id="p50Latency">—</div>
+            </div>
+            <div class="metric-box">
+              <div class="metric-title">P95 延时</div>
+              <div class="metric-num" id="p95Latency">—</div>
+            </div>
+            <div class="metric-box">
+              <div class="metric-title">有效样本数</div>
+              <div class="metric-num" id="sampleCount">0</div>
+            </div>
+          </div>
+
+          <div class="trace-grid-wrapper">
+            <div class="trace-info-box">
+              <div class="trace-box-label">最新解析断句</div>
+              <p id="traceText" class="trace-text-content">尚未收到最终识别结果。</p>
+              <p id="networkSummary" class="network-stats-text">Agora 网络统计：等待数据</p>
+            </div>
+            <div class="trace-stages-box">
+              <div class="trace-box-label">分段延时瀑布 (Waterfall)</div>
+              <div id="traceStages" class="trace-stages-list">
+                <p class="trace-empty">开始识别并产生语音后，此处将呈现各链路阶段的耗时分解。</p>
+              </div>
+            </div>
+          </div>
+
+          <details class="logs-details">
+            <summary>展开控制面运行日志</summary>
+            <pre id="eventLog" class="event-log-pre"></pre>
+          </details>
+        </div>
+
+      </section>
+
+    </main>
+
+    <!-- Token Configuration Modal -->
+    <div class="modal-backdrop hidden" id="tokenModal">
+      <div class="modal-card">
+        <div class="modal-header">
+          <h3 class="modal-title">配置团队访问密钥</h3>
+          <button class="modal-close" onclick="closeTokenModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+          <p class="modal-desc">
+            请输入管理员下发的 <code>CLIENT_ACCESS_TOKEN</code>。密钥将持久保存在本地浏览器的安全存储中。
+          </p>
+          <div class="form-group">
+            <label for="accessKey">Access Token</label>
             <input
               id="accessKey"
               type="password"
+              class="form-input"
+              placeholder="请输入您的 Bearer Token"
               autocomplete="current-password"
-              placeholder="由管理员提供"
             />
-          </label>
-          <button id="startBtn" class="primary">开始识别</button>
-          <div class="button-row">
-            <button id="muteBtn" disabled>静音</button>
-            <button id="commitBtn" disabled>立即断句</button>
-          </div>
-          <label class="access-field" id="ttsField">
-            <span>文字转语音</span>
-            <input
-              id="ttsText"
-              type="text"
-              maxlength="500"
-              placeholder="输入文字，由 Bridge 朗读进频道"
-              disabled
-            />
-          </label>
-          <button id="speakBtn" disabled>朗读到频道</button>
-          <button id="stopBtn" class="danger" disabled>结束会话</button>
-
-          <dl class="session-meta">
-            <div><dt>会话</dt><dd id="sessionId">—</dd></div>
-            <div><dt>状态</dt><dd id="sessionState">待机</dd></div>
-            <div><dt>Bridge</dt><dd id="bridgeState">检测中</dd></div>
-          </dl>
-          <details>
-            <summary>运行日志</summary>
-            <pre id="eventLog"></pre>
-          </details>
-        </aside>
-      </section>
-
-      <section class="panel observability-panel" aria-labelledby="observabilityTitle">
-        <div class="observability-head">
-          <div>
-            <p class="panel-kicker">END-TO-END TRACE</p>
-            <h2 id="observabilityTitle">识别链路观测</h2>
-            <p class="observability-note">主指标为同一句各链路阶段之和；跨网络耗时使用 Agora 统计和 WebSocket ACK 估算。</p>
-          </div>
-          <div class="observability-actions">
-            <button id="exportMetricsBtn" disabled>下载 JSON</button>
-            <button id="clearMetricsBtn" disabled>清空数据</button>
           </div>
         </div>
-
-        <div class="metric-summary" aria-label="会话延时汇总">
-          <div><small>本句端到端估算</small><strong id="latestLatency">—</strong></div>
-          <div><small>P50</small><strong id="p50Latency">—</strong></div>
-          <div><small>P95</small><strong id="p95Latency">—</strong></div>
-          <div><small>有效样本</small><strong id="sampleCount">0</strong></div>
+        <div class="modal-footer">
+          <button class="btn btn-outline" onclick="closeTokenModal()">取消</button>
+          <button class="btn btn-primary" onclick="saveTokenAndClose()">保存密钥</button>
         </div>
+      </div>
+    </div>
 
-        <div class="trace-grid">
-          <div>
-            <p class="trace-label">最新一句</p>
-            <p id="traceText" class="trace-text">尚未收到最终识别结果。</p>
-            <p id="networkSummary" class="network-summary">Agora 网络统计：等待数据</p>
-          </div>
-          <div id="traceStages" class="trace-stages" aria-live="polite">
-            <p class="trace-empty">开始识别后，这里会展示各阶段耗时。</p>
-          </div>
-        </div>
-      </section>
-
-      <footer>
-        <span>音频路径：Browser → Agora → LAN Bridge → OminiX Qwen3-ASR</span>
-        <span>文本路径：LAN Bridge → VPS WebSocket → Browser</span>
-      </footer>
-    </main>
-
+    <!-- Agora RTC SDK -->
     <script src="https://download.agora.io/sdk/release/AgoraRTC_N-4.24.7.js"></script>
     <script src="/app.js" defer></script>
   </body>

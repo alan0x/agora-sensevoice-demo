@@ -784,6 +784,8 @@ async fn commit_utterance(req: &mut Request, res: &mut Response) {
 struct SpeakRequest {
     text: String,
     voice: Option<String>,
+    speed: Option<f32>,
+    instruct: Option<String>,
 }
 
 fn valid_speak_text(value: &str) -> bool {
@@ -798,6 +800,14 @@ fn valid_tts_voice(value: &str) -> bool {
         && value
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+}
+
+fn valid_tts_speed(value: f32) -> bool {
+    value.is_finite() && (0.2..=3.0).contains(&value)
+}
+
+fn valid_tts_instruct(value: &str) -> bool {
+    value.chars().count() <= 200 && !value.chars().any(char::is_control)
 }
 
 #[handler]
@@ -849,6 +859,33 @@ async fn speak_text(req: &mut Request, res: &mut Response) {
         );
         return;
     }
+    let speed = request.speed;
+    if let Some(spd) = speed {
+        if !valid_tts_speed(spd) {
+            render_error(
+                res,
+                StatusCode::BAD_REQUEST,
+                "invalid_speed",
+                "speed must be a number between 0.2 and 3.0",
+            );
+            return;
+        }
+    }
+    let instruct = request
+        .instruct
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty());
+    if let Some(ref inst) = instruct {
+        if !valid_tts_instruct(inst) {
+            render_error(
+                res,
+                StatusCode::BAD_REQUEST,
+                "invalid_instruct",
+                "instruct must contain at most 200 non-control characters",
+            );
+            return;
+        }
+    }
     let app = state();
     let inner = app.inner.lock().await;
     if !inner.sessions.contains_key(&id) {
@@ -867,6 +904,12 @@ async fn speak_text(req: &mut Request, res: &mut Response) {
     });
     if let Some(voice) = voice {
         event["voice"] = json!(voice);
+    }
+    if let Some(speed) = speed {
+        event["speed"] = json!(speed);
+    }
+    if let Some(instruct) = instruct {
+        event["instruct"] = json!(instruct);
     }
     let sent = inner
         .bridge
@@ -1556,6 +1599,21 @@ mod tests {
         assert!(!valid_tts_voice(""));
         assert!(!valid_tts_voice("not a voice"));
         assert!(!valid_tts_voice(&"a".repeat(65)));
+    }
+
+    #[test]
+    fn tts_speed_and_instruct_validation() {
+        assert!(valid_tts_speed(0.2));
+        assert!(valid_tts_speed(1.0));
+        assert!(valid_tts_speed(3.0));
+        assert!(!valid_tts_speed(0.1));
+        assert!(!valid_tts_speed(3.1));
+        assert!(!valid_tts_speed(f32::NAN));
+
+        assert!(valid_tts_instruct("温柔地"));
+        assert!(valid_tts_instruct(""));
+        assert!(!valid_tts_instruct("有\u{0007}控制符"));
+        assert!(!valid_tts_instruct(&"字".repeat(201)));
     }
 
     #[test]

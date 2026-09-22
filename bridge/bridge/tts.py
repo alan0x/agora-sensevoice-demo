@@ -104,7 +104,13 @@ class TtsClient:
         self.avoid_comma_split = avoid_comma_split
         self._client = httpx.AsyncClient(timeout=timeout_seconds)
 
-    async def stream_pcm(self, text: str, voice: Optional[str] = None) -> AsyncIterator[bytes]:
+    async def stream_pcm(
+        self,
+        text: str,
+        voice: Optional[str] = None,
+        speed: Optional[float] = None,
+        instruct: Optional[str] = None,
+    ) -> AsyncIterator[bytes]:
         normalized = normalize_tts_text(text, avoid_comma_split=self.avoid_comma_split)
         body = {
             "input": normalized,
@@ -115,10 +121,12 @@ class TtsClient:
         selected_voice = (voice or "").strip() or self.voice
         if selected_voice:
             body["voice"] = selected_voice
-        if self.instruct:
-            body["instruct"] = self.instruct
-        if self.speed != 1.0:
-            body["speed"] = self.speed
+        selected_instruct = (instruct or "").strip() or self.instruct
+        if selected_instruct:
+            body["instruct"] = selected_instruct
+        selected_speed = speed if speed is not None else self.speed
+        if selected_speed != 1.0:
+            body["speed"] = selected_speed
         if self.temperature is not None:
             body["temperature"] = self.temperature
         if self.top_p is not None:
