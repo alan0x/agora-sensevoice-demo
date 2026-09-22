@@ -228,8 +228,8 @@ class RealSession:
             upsampler = PcmUpsampler2x()
             pending = bytearray()
             quantum = int(TTS_TARGET_RATE * 2 * 0.01)  # 10 ms alignment
-            first_push = int(TTS_TARGET_RATE * 2 * 0.8)  # start after ~800 ms
-            max_push = int(TTS_TARGET_RATE * 2 * 2.5)  # refill up to ~2.5 s
+            first_push = int(TTS_TARGET_RATE * 2 * 1.5)  # start after ~1.5 s
+            push_chunk = int(TTS_TARGET_RATE * 2 * 1.0)  # 1 s per scheduled push
             started_playback = False
             stream_done = False
             received_ms = 0
@@ -240,70 +240,45 @@ class RealSession:
                 async for chunk in self.tts.stream_pcm(text, voice):
                     pending.extend(upsampler.feed(chunk))
                     received_ms += len(chunk) // (TTS_SOURCE_RATE * 2 // 1000)
-                    logger.info(
-                        "tts stream: received=%dms buffered=%dms",
-                        received_ms,
-                        len(pending) // (TTS_TARGET_RATE * 2 // 1000),
-                    )
                 stream_done = True
                 logger.info("tts stream complete: received=%dms", received_ms)
 
             producer = asyncio.create_task(produce())
-            underrun_ticks = 0
-            sdk_stuck_ticks = 0
             try:
-                # Refill loop mirroring the upstream SDK example: hand the SDK
-                # a large buffer every time it drains the previous one. Small
-                # gated pushes starve playout every few hundred ms and stutter.
+                # Deadline pacing: TTS generation runs ~5x realtime, so we can
+                # keep the SDK queue perpetually fed. Push 1 s of audio on a
+                # strict 1 s monotonic schedule; never let the queue drain to
+                # empty, because every drain boundary is an audible gap at the
+                # receiver.
+                next_deadline = time.perf_counter()
                 while True:
-                    if self.receiver.push_ready():
-                        threshold = 1 if started_playback else first_push
-                        if len(pending) >= threshold or (stream_done and pending):
-                            if stream_done and len(pending) % quantum:
-                                pending.extend(
-                                    b"\x00" * (quantum - len(pending) % quantum)
-                                )
-                            size = min(len(pending), max_push)
-                            size -= size % quantum
-                            frame = bytearray(pending[:size])
-                            if self.receiver.push_pcm(frame, TTS_TARGET_RATE, 1):
-                                del pending[:size]
-                                started_playback = True
-                                pushed_ms += size // (TTS_TARGET_RATE * 2 // 1000)
-                                logger.info(
-                                    "tts push: pushed=%dms buffered=%dms",
-                                    pushed_ms,
-                                    len(pending) // (TTS_TARGET_RATE * 2 // 1000),
-                                )
-                    if started_playback and not pending and not stream_done:
-                        underrun_ticks += 1
-                        if underrun_ticks % 50 == 0:
-                            logger.warning(
-                                "tts playback underrun: TTS stream is not "
-                                "feeding for %.1fs (pushed=%dms received=%dms)",
-                                underrun_ticks * 0.02,
-                                pushed_ms,
-                                received_ms,
-                            )
-                    if (
-                        started_playback
-                        and pending
-                        and not self.receiver.push_ready()
-                    ):
-                        sdk_stuck_ticks += 1
-                        if sdk_stuck_ticks % 250 == 0:
-                            logger.warning(
-                                "tts push blocked: SDK not draining for %.1fs "
-                                "(pushed=%dms buffered=%dms)",
-                                sdk_stuck_ticks * 0.02,
-                                pushed_ms,
-                                len(pending) // (TTS_TARGET_RATE * 2 // 1000),
-                            )
-                    else:
-                        sdk_stuck_ticks = 0
-                    if stream_done and not pending and self.receiver.push_ready():
-                        break
-                    await asyncio.sleep(0.02)
+                    if not started_playback and len(pending) < first_push and not stream_done:
+                        await asyncio.sleep(0.02)
+                        continue
+                    if not pending:
+                        if stream_done:
+                            break
+                        await asyncio.sleep(0.02)
+                        continue
+                    if stream_done and len(pending) % quantum:
+                        pending.extend(b"\x00" * (quantum - len(pending) % quantum))
+                    size = min(len(pending), push_chunk)
+                    size -= size % quantum
+                    frame = bytearray(pending[:size])
+                    while not self.receiver.push_pcm(frame, TTS_TARGET_RATE, 1):
+                        await asyncio.sleep(0.02)
+                    del pending[:size]
+                    started_playback = True
+                    pushed_ms += size // (TTS_TARGET_RATE * 2 // 1000)
+                    logger.info(
+                        "tts push: pushed=%dms buffered=%dms",
+                        pushed_ms,
+                        len(pending) // (TTS_TARGET_RATE * 2 // 1000),
+                    )
+                    next_deadline += 1.0
+                    delay = next_deadline - time.perf_counter()
+                    if delay > 0:
+                        await asyncio.sleep(delay)
             finally:
                 if not producer.done():
                     producer.cancel()
