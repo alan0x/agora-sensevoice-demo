@@ -860,31 +860,27 @@ async fn speak_text(req: &mut Request, res: &mut Response) {
         return;
     }
     let speed = request.speed;
-    if let Some(spd) = speed {
-        if !valid_tts_speed(spd) {
-            render_error(
-                res,
-                StatusCode::BAD_REQUEST,
-                "invalid_speed",
-                "speed must be a number between 0.2 and 3.0",
-            );
-            return;
-        }
+    if speed.is_some_and(|value| !valid_tts_speed(value)) {
+        render_error(
+            res,
+            StatusCode::BAD_REQUEST,
+            "invalid_speed",
+            "speed must be a number between 0.2 and 3.0",
+        );
+        return;
     }
     let instruct = request
         .instruct
         .map(|value| value.trim().to_owned())
         .filter(|value| !value.is_empty());
-    if let Some(ref inst) = instruct {
-        if !valid_tts_instruct(inst) {
-            render_error(
-                res,
-                StatusCode::BAD_REQUEST,
-                "invalid_instruct",
-                "instruct must contain at most 200 non-control characters",
-            );
-            return;
-        }
+    if instruct.as_deref().is_some_and(|value| !valid_tts_instruct(value)) {
+        render_error(
+            res,
+            StatusCode::BAD_REQUEST,
+            "invalid_instruct",
+            "instruct must contain at most 200 non-control characters",
+        );
+        return;
     }
     let app = state();
     let inner = app.inner.lock().await;

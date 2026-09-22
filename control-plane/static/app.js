@@ -104,10 +104,9 @@ function switchTab(tabId) {
 
 function handleHashChange() {
   const hash = window.location.hash.replace("#", "") || "home";
+  // 只响应标签级 hash;文档锚点(如 #doc-speak)不触发标签切换
   if (["home", "docs", "playground"].includes(hash)) {
     switchTab(hash);
-  } else {
-    switchTab("home");
   }
 }
 
@@ -905,6 +904,31 @@ ui.ttsText.addEventListener("keydown", (event) => {
 ui.stop.addEventListener("click", stop);
 ui.exportMetrics.addEventListener("click", exportObservations);
 ui.clearMetrics.addEventListener("click", clearObservations);
+
+// 内联 onclick 会被 CSP(script-src 无 'unsafe-inline')拦截,全部改为事件绑定
+document.querySelector("#ctaPlaygroundBtn")?.addEventListener("click", () => switchTab("playground"));
+document.querySelector("#ctaDocsBtn")?.addEventListener("click", () => switchTab("docs"));
+document.querySelectorAll(".preset-pill").forEach((pill) => {
+  pill.addEventListener("click", () => setTtsSample(pill.dataset.sample));
+});
+document.querySelector("#tokenModalSave")?.addEventListener("click", saveTokenAndClose);
+document.querySelector("#tokenModalCancel")?.addEventListener("click", closeTokenModal);
+document.querySelector("#tokenModalClose")?.addEventListener("click", closeTokenModal);
+ui.tokenModal?.addEventListener("click", (event) => {
+  if (event.target === ui.tokenModal) closeTokenModal();
+});
+
+// 文档侧边栏:页内平滑滚动,不占用 hash 路由
+document.querySelectorAll(".sidebar-link").forEach((link) => {
+  link.addEventListener("click", (event) => {
+    event.preventDefault();
+    const target = document.querySelector(link.getAttribute("href"));
+    target?.scrollIntoView({ behavior: "smooth", block: "start" });
+    document
+      .querySelectorAll(".sidebar-link")
+      .forEach((item) => item.classList.toggle("active", item === link));
+  });
+});
 
 window.addEventListener("pagehide", () => {
   runtime.microphone?.close();

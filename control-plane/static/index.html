@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="color-scheme" content="dark" />
+    <meta name="color-scheme" content="light" />
     <title>Octos Audio API · 实时语音转写与合成服务</title>
     <link rel="stylesheet" href="/styles.css" />
   </head>
@@ -67,11 +67,11 @@
               专为实时人机语音对话、长语音流式听写与即时播报打造，具备全双工低延迟、零入站公网暴露与完备的可观测性。
             </p>
             <div class="hero-cta-group">
-              <button class="btn btn-primary" onclick="switchTab('playground')">
+              <button class="btn btn-primary" id="ctaPlaygroundBtn">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
                 在 Playground 调试
               </button>
-              <button class="btn btn-secondary" onclick="switchTab('docs')">
+              <button class="btn btn-secondary" id="ctaDocsBtn">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
                 查阅 API 参考
               </button>
@@ -524,7 +524,7 @@ client.on('user-published', async (user, mediaType) => {
                       <td><code>voice</code></td>
                       <td>string</td>
                       <td>否</td>
-                      <td>音色标识。默认 <code>serena</code>。可选 <code>vivian</code>, <code>ryan</code>, <code>eric</code> 或自定义音色名。</td>
+                      <td>音色标识。默认 <code>serena</code>。中文可选 <code>vivian</code>, <code>uncle_fu</code>, <code>dylan</code>, <code>eric</code> 或自定义音色名(英文音色为 <code>ryan</code>, <code>aiden</code>)。</td>
                     </tr>
                     <tr>
                       <td><code>speed</code></td>
@@ -720,9 +720,9 @@ client.on('user-published', async (user, mediaType) => {
                 <div class="form-label-row">
                   <label for="ttsText">朗读文本</label>
                   <div class="preset-pills">
-                    <span class="preset-pill" onclick="setTtsSample('日常')">日常问答</span>
-                    <span class="preset-pill" onclick="setTtsSample('技术')">技术报告</span>
-                    <span class="preset-pill" onclick="setTtsSample('比赛')">长句测试</span>
+                    <span class="preset-pill" data-sample="日常">日常问答</span>
+                    <span class="preset-pill" data-sample="技术">技术报告</span>
+                    <span class="preset-pill" data-sample="比赛">长句测试</span>
                   </div>
                 </div>
                 <textarea
@@ -739,10 +739,11 @@ client.on('user-published', async (user, mediaType) => {
                 <div class="form-group flex-1">
                   <label for="ttsVoiceSelect">音色选择 (Voice)</label>
                   <select id="ttsVoiceSelect" class="form-select" disabled>
-                    <option value="serena" selected>serena (温暖知性女声 · 推荐)</option>
-                    <option value="vivian">vivian (清晰播音女声)</option>
-                    <option value="ryan">ryan (沉稳自然男声)</option>
-                    <option value="eric">eric (年轻活力男声)</option>
+                    <option value="serena" selected>serena(温暖知性女声 · 中文 · 推荐)</option>
+                    <option value="vivian">vivian(活泼俏皮女声 · 中文)</option>
+                    <option value="uncle_fu">uncle_fu(低沉磁性男声 · 中文)</option>
+                    <option value="dylan">dylan(京腔青年男声)</option>
+                    <option value="eric">eric(川腔活力男声)</option>
                     <option value="custom">自定义音色...</option>
                   </select>
                   <input
@@ -859,7 +860,7 @@ client.on('user-published', async (user, mediaType) => {
       <div class="modal-card">
         <div class="modal-header">
           <h3 class="modal-title">配置团队访问密钥</h3>
-          <button class="modal-close" onclick="closeTokenModal()">&times;</button>
+          <button class="modal-close" id="tokenModalClose">&times;</button>
         </div>
         <div class="modal-body">
           <p class="modal-desc">
@@ -877,8 +878,8 @@ client.on('user-published', async (user, mediaType) => {
           </div>
         </div>
         <div class="modal-footer">
-          <button class="btn btn-outline" onclick="closeTokenModal()">取消</button>
-          <button class="btn btn-primary" onclick="saveTokenAndClose()">保存密钥</button>
+          <button class="btn btn-outline" id="tokenModalCancel">取消</button>
+          <button class="btn btn-primary" id="tokenModalSave">保存密钥</button>
         </div>
       </div>
     </div>
