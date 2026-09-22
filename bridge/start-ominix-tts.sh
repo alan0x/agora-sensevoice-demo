@@ -4,7 +4,7 @@
 # block ASR inference on a shared instance (single inference thread upstream).
 set -euo pipefail
 
-TTS_MODEL_DIR="${TTS_MODEL_DIR:-$HOME/.OminiX/models/Qwen3-TTS-12Hz-1.7B-CustomVoice-4bit}"
+TTS_MODEL_DIR="${TTS_MODEL_DIR:-$HOME/.OminiX/models/Qwen3-TTS-12Hz-1.7B-CustomVoice-8bit}"
 TTS_PORT="${TTS_PORT:-8090}"
 OMINIX_BIN="${OMINIX_BIN:-}"
 
@@ -24,7 +24,7 @@ fi
 if [[ ! -f "$TTS_MODEL_DIR/config.json" ]]; then
   echo "Qwen3-TTS model not found at $TTS_MODEL_DIR." >&2
   echo "Download it with:" >&2
-  echo "  hf download mlx-community/Qwen3-TTS-12Hz-1.7B-CustomVoice-4bit --local-dir $TTS_MODEL_DIR" >&2
+  echo "  hf download mlx-community/Qwen3-TTS-12Hz-1.7B-CustomVoice-8bit --local-dir $TTS_MODEL_DIR" >&2
   exit 1
 fi
 

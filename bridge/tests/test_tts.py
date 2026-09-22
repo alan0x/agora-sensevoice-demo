@@ -1,6 +1,17 @@
 import unittest
 
-from bridge.tts import PcmUpsampler2x
+from bridge.tts import PcmUpsampler2x, normalize_tts_text
+
+
+class NormalizeTtsTextTest(unittest.TestCase):
+    def test_chinese_text_gets_full_width_punctuation(self):
+        self.assertEqual(
+            normalize_tts_text("你好,世界!好吗?"),
+            "你好，世界！好吗？",
+        )
+
+    def test_ascii_text_is_untouched(self):
+        self.assertEqual(normalize_tts_text("hello, world!"), "hello, world!")
 
 
 def pcm(samples):
