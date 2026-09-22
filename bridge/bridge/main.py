@@ -232,14 +232,25 @@ class RealSession:
             max_push = int(TTS_TARGET_RATE * 2 * 2.5)  # refill up to ~2.5 s
             started_playback = False
             stream_done = False
+            received_ms = 0
+            pushed_ms = 0
 
             async def produce() -> None:
-                nonlocal stream_done
+                nonlocal stream_done, received_ms
                 async for chunk in self.tts.stream_pcm(text, voice):
                     pending.extend(upsampler.feed(chunk))
+                    received_ms += len(chunk) // (TTS_SOURCE_RATE * 2 // 1000)
+                    logger.info(
+                        "tts stream: received=%dms buffered=%dms",
+                        received_ms,
+                        len(pending) // (TTS_TARGET_RATE * 2 // 1000),
+                    )
                 stream_done = True
+                logger.info("tts stream complete: received=%dms", received_ms)
 
             producer = asyncio.create_task(produce())
+            underrun_ticks = 0
+            sdk_stuck_ticks = 0
             try:
                 # Refill loop mirroring the upstream SDK example: hand the SDK
                 # a large buffer every time it drains the previous one. Small
@@ -258,6 +269,38 @@ class RealSession:
                             if self.receiver.push_pcm(frame, TTS_TARGET_RATE, 1):
                                 del pending[:size]
                                 started_playback = True
+                                pushed_ms += size // (TTS_TARGET_RATE * 2 // 1000)
+                                logger.info(
+                                    "tts push: pushed=%dms buffered=%dms",
+                                    pushed_ms,
+                                    len(pending) // (TTS_TARGET_RATE * 2 // 1000),
+                                )
+                    if started_playback and not pending and not stream_done:
+                        underrun_ticks += 1
+                        if underrun_ticks % 50 == 0:
+                            logger.warning(
+                                "tts playback underrun: TTS stream is not "
+                                "feeding for %.1fs (pushed=%dms received=%dms)",
+                                underrun_ticks * 0.02,
+                                pushed_ms,
+                                received_ms,
+                            )
+                    if (
+                        started_playback
+                        and pending
+                        and not self.receiver.push_ready()
+                    ):
+                        sdk_stuck_ticks += 1
+                        if sdk_stuck_ticks % 250 == 0:
+                            logger.warning(
+                                "tts push blocked: SDK not draining for %.1fs "
+                                "(pushed=%dms buffered=%dms)",
+                                sdk_stuck_ticks * 0.02,
+                                pushed_ms,
+                                len(pending) // (TTS_TARGET_RATE * 2 // 1000),
+                            )
+                    else:
+                        sdk_stuck_ticks = 0
                     if stream_done and not pending and self.receiver.push_ready():
                         break
                     await asyncio.sleep(0.02)
