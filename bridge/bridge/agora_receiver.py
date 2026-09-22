@@ -198,6 +198,11 @@ class AgoraReceiver:
         completed = self.connection.is_push_to_rtc_completed()
         if isinstance(completed, bool) and not completed:
             return False
+        # The SDK takes the buffer via ctypes.from_buffer, which requires a
+        # writable object; immutable bytes raise "underlying buffer is not
+        # writable".
+        if isinstance(pcm, bytes):
+            pcm = bytearray(pcm)
         result = self.connection.push_audio_pcm_data(pcm, sample_rate, channels)
         return not (isinstance(result, int) and result < 0)
 
