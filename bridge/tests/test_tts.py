@@ -14,6 +14,13 @@ class NormalizeTtsTextTest(unittest.TestCase):
             "第一,第二;第三,第四。",
         )
 
+    def test_chinese_multi_line_paragraphs_are_collapsed(self):
+        text = "第一行。\n第二行，继续。\n第三行。"
+        self.assertEqual(
+            normalize_tts_text(text),
+            "第一行。 第二行,继续。 第三行。",
+        )
+
     def test_chinese_text_legacy_full_width_when_disabled(self):
         self.assertEqual(
             normalize_tts_text("你好,世界!好吗?", avoid_comma_split=False),
@@ -31,7 +38,7 @@ class TtsClientConfigTest(unittest.TestCase):
         client = TtsClient("http://127.0.0.1:8090/v1/audio/speech")
         self.assertEqual(client.temperature, 0.2)
         self.assertEqual(client.top_p, 0.8)
-        self.assertIsNone(client.seed)
+        self.assertEqual(client.seed, 42)
         self.assertTrue(client.avoid_comma_split)
 
     def test_custom_sampling_config(self):

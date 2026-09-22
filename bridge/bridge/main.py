@@ -79,7 +79,7 @@ class RealSession:
                 language=os.getenv("TTS_LANGUAGE", "chinese"),
                 temperature=float(os.getenv("TTS_TEMPERATURE", "0.2")),
                 top_p=float(os.getenv("TTS_TOP_P", "0.8")),
-                seed=int(os.getenv("TTS_SEED")) if os.getenv("TTS_SEED", "").strip() else None,
+                seed=int(os.getenv("TTS_SEED", "42")) if os.getenv("TTS_SEED", "42").strip() else None,
                 avoid_comma_split=os.getenv("TTS_AVOID_COMMA_SPLIT", "true").lower() not in ("0", "false", "no"),
             )
             if tts_url

@@ -5,9 +5,12 @@ not accept a 24 kHz PCM feed, so frames are upsampled 2x to 48 kHz before being
 pushed into the RTC connection.
 """
 
+import logging
 from typing import AsyncIterator, Optional
 
 import httpx
+
+logger = logging.getLogger("bridge.tts")
 
 TTS_SOURCE_RATE = 24_000
 TTS_TARGET_RATE = 48_000
@@ -25,15 +28,22 @@ def _has_cjk(text: str) -> bool:
 def normalize_tts_text(text: str, avoid_comma_split: bool = True) -> str:
     """Normalize punctuation for Qwen3-TTS.
 
-    If avoid_comma_split is True (default), clause separators (，, ；, 、) are
-    mapped to half-width so OminiX does not chop clauses into micro-fragments
-    that suffer prosody discontinuities and duration stalling (extreme slow speech).
-    Sentence terminators (？, ！) are kept as CJK punctuation.
+    If avoid_comma_split is True (default):
+    - Multi-line paragraphs are collapsed into a continuous stream to prevent
+      OminiX from chopping paragraphs into isolated generations with jarring prosody.
+    - Clause separators (，, ；, 、) are mapped to half-width (, / ;) so OminiX
+      does not chop clauses into micro-fragments that suffer duration stalling.
+    - Sentence terminators (？, ！) are kept as CJK punctuation.
 
     If avoid_comma_split is False, legacy normalization to full-width is used.
     """
     if not _has_cjk(text):
         return text
+
+    # Collapse multiple lines into a single coherent text flow
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if lines:
+        text = " ".join(lines)
 
     if avoid_comma_split:
         text = text.translate(_CJK_TERMINATORS)
@@ -79,7 +89,7 @@ class TtsClient:
         language: str = "chinese",
         temperature: float = 0.2,
         top_p: float = 0.8,
-        seed: Optional[int] = None,
+        seed: Optional[int] = 42,
         avoid_comma_split: bool = True,
         timeout_seconds: float = 120.0,
     ) -> None:
@@ -95,8 +105,9 @@ class TtsClient:
         self._client = httpx.AsyncClient(timeout=timeout_seconds)
 
     async def stream_pcm(self, text: str, voice: Optional[str] = None) -> AsyncIterator[bytes]:
+        normalized = normalize_tts_text(text, avoid_comma_split=self.avoid_comma_split)
         body = {
-            "input": normalize_tts_text(text, avoid_comma_split=self.avoid_comma_split),
+            "input": normalized,
             "model": "qwen3-tts",
             "response_format": "pcm",
             "language": self.language,
@@ -114,6 +125,16 @@ class TtsClient:
             body["top_p"] = self.top_p
         if self.seed is not None:
             body["seed"] = self.seed
+        logger.info(
+            "TTS stream request: url=%s voice=%s temp=%s top_p=%s seed=%s chars=%d preview=%s",
+            self.url,
+            selected_voice,
+            self.temperature,
+            self.top_p,
+            self.seed,
+            len(normalized),
+            repr(normalized[:50]),
+        )
         async with self._client.stream("POST", self.url, json=body) as response:
             response.raise_for_status()
             async for chunk in response.aiter_bytes():
@@ -122,4 +143,5 @@ class TtsClient:
 
     async def close(self) -> None:
         await self._client.aclose()
+
 
