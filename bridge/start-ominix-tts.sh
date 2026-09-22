@@ -6,10 +6,18 @@ set -euo pipefail
 
 TTS_MODEL_DIR="${TTS_MODEL_DIR:-$HOME/.OminiX/models/Qwen3-TTS-12Hz-1.7B-CustomVoice-4bit}"
 TTS_PORT="${TTS_PORT:-8090}"
-OMINIX_BIN="${OMINIX_BIN:-$(command -v ominix-api || true)}"
+OMINIX_BIN="${OMINIX_BIN:-}"
+
+if [[ -z "$OMINIX_BIN" ]]; then
+  if [[ -x "$HOME/Documents/projects/OminiX-API/target/release/ominix-api" ]]; then
+    OMINIX_BIN="$HOME/Documents/projects/OminiX-API/target/release/ominix-api"
+  else
+    OMINIX_BIN="$(command -v ominix-api || true)"
+  fi
+fi
 
 if [[ -z "$OMINIX_BIN" || ! -x "$OMINIX_BIN" ]]; then
-  echo "ominix-api binary not found. Run the official install.sh or set OMINIX_BIN." >&2
+  echo "ominix-api binary not found. Run the official install.sh, build from source, or set OMINIX_BIN." >&2
   exit 1
 fi
 
