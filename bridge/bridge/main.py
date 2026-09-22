@@ -243,20 +243,33 @@ class RealSession:
             # Push the whole utterance in a few large buffers. The SDK paces
             # playout itself; between buffers wait for it to drain, which is
             # the pattern from the upstream SDK example.
+            #
+            # IMPORTANT: the SDK reads pushed buffers asynchronously via
+            # ctypes.from_buffer (zero-copy). Every buffer must stay alive
+            # and unmodified until push_ready() reports the drain, otherwise
+            # the GC frees/reuses the memory and playout turns to garbage.
             max_push = int(TTS_TARGET_RATE * 2 * 5.0)  # ~5 s per buffer
+            in_flight: list = []
             offset = 0
             pushed_ms = 0
             while offset < len(audio):
                 if offset > 0:
                     while not self.receiver.push_ready():
                         await asyncio.sleep(0.05)
+                    in_flight.clear()  # previous buffer fully consumed
                 size = min(len(audio) - offset, max_push)
                 frame = bytearray(audio[offset : offset + size])
                 while not self.receiver.push_pcm(frame, TTS_TARGET_RATE, 1):
                     await asyncio.sleep(0.05)
+                in_flight.append(frame)
                 offset += size
                 pushed_ms += size // (TTS_TARGET_RATE * 2 // 1000)
                 logger.info("tts push: pushed=%dms/%dms", pushed_ms, total_ms)
+            # Wait for the last buffer to finish playing before reporting
+            # completion, then release it.
+            while not self.receiver.push_ready():
+                await asyncio.sleep(0.05)
+            in_flight.clear()
             await self.emit({"type": "tts.finished", "sessionId": self.session_id})
         except asyncio.CancelledError:
             raise
