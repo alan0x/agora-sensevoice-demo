@@ -220,27 +220,41 @@ class RealSession:
         )
         try:
             upsampler = PcmUpsampler2x()
-            buffer = bytearray()
-            frame_bytes = int(TTS_TARGET_RATE * 2 * 0.02)  # 20 ms mono 16-bit
-            frame_seconds = frame_bytes / (TTS_TARGET_RATE * 2)
-            next_deadline = time.perf_counter()
-            async for chunk in self.tts.stream_pcm(text, voice):
-                buffer += upsampler.feed(chunk)
-                while len(buffer) >= frame_bytes:
-                    frame = bytes(buffer[:frame_bytes])
-                    del buffer[:frame_bytes]
+            pending = bytearray()
+            quantum = int(TTS_TARGET_RATE * 2 * 0.01)  # keep pushes 10 ms aligned
+            prebuffer = int(TTS_TARGET_RATE * 2 * 0.4)  # start after ~400 ms
+            max_push = int(TTS_TARGET_RATE * 2 * 0.5)  # then push ~500 ms at a time
+            started_playback = False
+
+            async def push_available() -> None:
+                # Large buffers let the SDK pace playback itself; small frames
+                # pushed on an asyncio timer starve the playout buffer and
+                # produce choppy audio.
+                nonlocal started_playback
+                threshold = max_push if started_playback else prebuffer
+                while len(pending) >= threshold:
+                    size = min(len(pending), max_push)
+                    size -= size % quantum
+                    if size == 0:
+                        return
+                    frame = bytearray(pending[:size])
+                    del pending[:size]
                     while not self.receiver.push_pcm(frame, TTS_TARGET_RATE, 1):
-                        await asyncio.sleep(0.005)
-                    next_deadline += frame_seconds
-                    delay = next_deadline - time.perf_counter()
-                    if delay > 0:
-                        await asyncio.sleep(delay)
-            if buffer:
-                # Pad the tail to a whole frame so the SDK always gets a
-                # well-formed 20 ms PCM frame.
-                tail = bytes(buffer).ljust(frame_bytes, b"\x00")
-                while not self.receiver.push_pcm(tail, TTS_TARGET_RATE, 1):
-                    await asyncio.sleep(0.005)
+                        await asyncio.sleep(0.01)
+                    started_playback = True
+                    threshold = max_push
+
+            async for chunk in self.tts.stream_pcm(text, voice):
+                pending += upsampler.feed(chunk)
+                await push_available()
+            if pending:
+                remainder = len(pending) % quantum
+                if remainder:
+                    pending.extend(b"\x00" * (quantum - remainder))
+                while not self.receiver.push_pcm(
+                    bytearray(pending), TTS_TARGET_RATE, 1
+                ):
+                    await asyncio.sleep(0.01)
             await self.emit({"type": "tts.finished", "sessionId": self.session_id})
         except asyncio.CancelledError:
             raise
