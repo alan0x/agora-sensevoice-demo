@@ -55,5 +55,111 @@ class PcmUpsampler2xTest(unittest.TestCase):
         self.assertEqual(PcmUpsampler2x().feed(b""), b"")
 
 
+class FakeTtsClient:
+    def __init__(self, chunks: list[bytes]) -> None:
+        self.chunks = chunks
+
+    async def stream_pcm(self, text: str, voice: str = None):
+        for chunk in self.chunks:
+            yield chunk
+
+
+class FakeReceiver:
+    def __init__(self) -> None:
+        self.pushed_frames: list[bytes] = []
+        self.cleared = False
+
+    def push_pcm(self, pcm: bytes, sample_rate: int = 48000, channels: int = 1) -> bool:
+        self.pushed_frames.append(bytes(pcm))
+        return True
+
+    def clear_audio_buffer(self) -> None:
+        self.cleared = True
+
+    def stop(self) -> None:
+        pass
+
+
+class TtsPlayoutPacerTest(unittest.IsolatedAsyncioTestCase):
+    async def test_speak_pushes_20ms_frames_and_emits_finished(self):
+        from bridge.main import RealSession, TTS_TARGET_RATE
+
+        emitted = []
+
+        async def emit(payload):
+            emitted.append(payload)
+
+        session = RealSession(
+            session_id="test-session",
+            agora={"appId": "app", "channel": "chan", "token": "tok", "uid": 9001},
+            asr_url="http://localhost:8080",
+            emit=emit,
+            tts_url="http://localhost:8090/v1/audio/speech",
+        )
+        fake_receiver = FakeReceiver()
+        session.receiver = fake_receiver
+
+        # Create 200 ms of 24 kHz audio (24000 * 2 * 0.2 = 9600 bytes)
+        # After 2x upsampling, becomes 400 ms of 48 kHz audio (19200 bytes = 10 frames of 20 ms)
+        raw_chunk = b"\x01\x00" * 4800
+        session.tts = FakeTtsClient([raw_chunk])
+
+        await session.speak("你好")
+        await session.tts_task
+
+        # Verify events
+        self.assertEqual(emitted[0]["type"], "tts.started")
+        self.assertEqual(emitted[0]["characters"], 2)
+        self.assertEqual(emitted[1]["type"], "tts.finished")
+
+        # Verify each frame is exactly 20 ms = 1920 bytes
+        frame_bytes = int(TTS_TARGET_RATE * 2 * 0.02)
+        self.assertEqual(frame_bytes, 1920)
+        self.assertGreater(len(fake_receiver.pushed_frames), 0)
+        for frame in fake_receiver.pushed_frames:
+            self.assertEqual(len(frame), frame_bytes)
+
+    async def test_barge_in_cancels_previous_and_clears_buffer(self):
+        import asyncio
+        from bridge.main import RealSession
+
+        emitted = []
+
+        async def emit(payload):
+            emitted.append(payload)
+
+        session = RealSession(
+            session_id="test-session",
+            agora={"appId": "app", "channel": "chan", "token": "tok", "uid": 9001},
+            asr_url="http://localhost:8080",
+            emit=emit,
+            tts_url="http://localhost:8090/v1/audio/speech",
+        )
+        fake_receiver = FakeReceiver()
+        session.receiver = fake_receiver
+
+        # A long stream: 10 chunks of 100 ms each
+        class SlowTtsClient:
+            async def stream_pcm(self, text, voice=None):
+                for _ in range(10):
+                    yield b"\x01\x00" * 2400
+                    await asyncio.sleep(0.05)
+
+        session.tts = SlowTtsClient()
+
+        # Start first speak
+        await session.speak("第一句很长的话")
+        first_task = session.tts_task
+        await asyncio.sleep(0.02)
+
+        # Barge-in with a second speak
+        session.tts = FakeTtsClient([b"\x01\x00" * 2400])
+        await session.speak("第二句短话")
+
+        self.assertTrue(first_task.done())
+        self.assertTrue(fake_receiver.cleared)
+        await session.tts_task
+
+
 if __name__ == "__main__":
     unittest.main()

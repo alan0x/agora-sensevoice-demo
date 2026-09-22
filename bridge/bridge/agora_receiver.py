@@ -135,8 +135,8 @@ class AgoraReceiver:
             enable_audio_recording_or_playout=0,
         )
         publish_config = RtcConnectionPublishConfig(
-            audio_profile=AudioProfileType.AUDIO_PROFILE_DEFAULT,
-            audio_scenario=AudioScenarioType.AUDIO_SCENARIO_AI_SERVER,
+            audio_profile=AudioProfileType.AUDIO_PROFILE_MUSIC_STANDARD,
+            audio_scenario=AudioScenarioType.AUDIO_SCENARIO_DEFAULT,
             is_publish_audio=True,
             is_publish_video=False,
             audio_publish_type=AudioPublishType.AUDIO_PUBLISH_TYPE_PCM,
@@ -209,6 +209,17 @@ class AgoraReceiver:
             pcm = bytearray(pcm)
         result = self.connection.push_audio_pcm_data(pcm, sample_rate, channels)
         return not (isinstance(result, int) and result < 0)
+
+    def clear_audio_buffer(self) -> None:
+        """Clear any queued audio in the local audio track sender buffer."""
+        if self.connection is None:
+            return
+        track = getattr(self.connection, "_audio_track", None)
+        if track is not None and hasattr(track, "clear_sender_buffer"):
+            try:
+                track.clear_sender_buffer()
+            except Exception:
+                logger.exception("Failed to clear audio track sender buffer")
 
     def stop(self) -> None:
         if self.connection is None:

@@ -214,6 +214,7 @@ class RealSession:
                 await self.tts_task
             except asyncio.CancelledError:
                 pass
+            self.receiver.clear_audio_buffer()
         self.tts_task = asyncio.create_task(self._speak(text, voice))
 
     async def _speak(self, text: str, voice: Optional[str]) -> None:
@@ -225,53 +226,96 @@ class RealSession:
             }
         )
         try:
-            # Receive the complete utterance first (generation runs ~5x
-            # realtime, so even a long text arrives in a couple of seconds),
-            # then play it out. No streaming, no timers.
             upsampler = PcmUpsampler2x()
-            audio = bytearray()
-            async for chunk in self.tts.stream_pcm(text, voice):
-                audio.extend(upsampler.feed(chunk))
-            if not audio:
-                raise RuntimeError("TTS returned no audio")
-            quantum = int(TTS_TARGET_RATE * 2 * 0.01)  # 10 ms alignment
-            if len(audio) % quantum:
-                audio.extend(b"\x00" * (quantum - len(audio) % quantum))
-            total_ms = len(audio) // (TTS_TARGET_RATE * 2 // 1000)
-            logger.info("tts stream complete: received=%dms", total_ms)
+            pending = bytearray()
+            stream_done = False
+            stream_error: Optional[Exception] = None
 
-            # Push the whole utterance in a few large buffers. The SDK paces
-            # playout itself; between buffers wait for it to drain, which is
-            # the pattern from the upstream SDK example.
-            #
-            # IMPORTANT: the SDK reads pushed buffers asynchronously via
-            # ctypes.from_buffer (zero-copy). Every buffer must stay alive
-            # and unmodified until push_ready() reports the drain, otherwise
-            # the GC frees/reuses the memory and playout turns to garbage.
-            max_push = int(TTS_TARGET_RATE * 2 * 5.0)  # ~5 s per buffer
-            in_flight: list = []
-            offset = 0
+            # Audio framing: 20 ms frames at 48 kHz mono 16-bit
+            # 48000 * 2 * 0.02 = 1920 bytes per 20 ms frame (960 samples)
+            frame_bytes = int(TTS_TARGET_RATE * 2 * 0.02)
+            prebuffer_bytes = frame_bytes * 5  # 100 ms pre-buffering
+            bytes_per_ms = TTS_TARGET_RATE * 2 // 1000
+
+            async def produce() -> None:
+                nonlocal stream_done, stream_error
+                try:
+                    async for chunk in self.tts.stream_pcm(text, voice):
+                        pending.extend(upsampler.feed(chunk))
+                except Exception as exc:
+                    stream_error = exc
+                finally:
+                    stream_done = True
+
+            producer = asyncio.create_task(produce())
             pushed_ms = 0
-            while offset < len(audio):
-                if offset > 0:
-                    while not self.receiver.push_ready():
-                        await asyncio.sleep(0.05)
-                    in_flight.clear()  # previous buffer fully consumed
-                size = min(len(audio) - offset, max_push)
-                frame = bytearray(audio[offset : offset + size])
-                while not self.receiver.push_pcm(frame, TTS_TARGET_RATE, 1):
-                    await asyncio.sleep(0.05)
-                in_flight.append(frame)
-                offset += size
-                pushed_ms += size // (TTS_TARGET_RATE * 2 // 1000)
-                logger.info("tts push: pushed=%dms/%dms", pushed_ms, total_ms)
-            # Wait for the last buffer to finish playing before reporting
-            # completion, then release it.
-            while not self.receiver.push_ready():
-                await asyncio.sleep(0.05)
-            in_flight.clear()
-            await self.emit({"type": "tts.finished", "sessionId": self.session_id})
+            pushed_frames = 0
+            start_time: Optional[float] = None
+
+            try:
+                while True:
+                    if stream_error is not None:
+                        raise stream_error
+
+                    # Pre-buffer: wait until we have >= 100 ms buffered,
+                    # or the stream has completed.
+                    if start_time is None:
+                        if len(pending) >= prebuffer_bytes or stream_done:
+                            if not pending and stream_done:
+                                if not stream_error:
+                                    raise RuntimeError("TTS returned no audio")
+                                break
+                            start_time = time.perf_counter()
+                            pushed_frames = 0
+                        else:
+                            await asyncio.sleep(0.01)
+                            continue
+
+                    # Buffer underflow check: if pending has less than a frame
+                    if len(pending) < frame_bytes:
+                        if stream_done:
+                            # Push remainder padded to frame_bytes if any audio left
+                            if pending:
+                                tail = bytearray(pending).ljust(frame_bytes, b"\x00")
+                                pending.clear()
+                                self.receiver.push_pcm(tail, TTS_TARGET_RATE, 1)
+                                pushed_ms += frame_bytes // bytes_per_ms
+                            break
+                        # Still generating but buffer starved: reset pacing and wait
+                        start_time = None
+                        await asyncio.sleep(0.01)
+                        continue
+
+                    # Precise monotonic pacing: schedule each 20 ms frame
+                    target_time = start_time + (pushed_frames * 0.02)
+                    now = time.perf_counter()
+                    delay = target_time - now
+                    if delay > 0:
+                        await asyncio.sleep(delay)
+
+                    frame = bytearray(pending[:frame_bytes])
+                    del pending[:frame_bytes]
+                    if self.receiver.push_pcm(frame, TTS_TARGET_RATE, 1):
+                        pushed_frames += 1
+                        pushed_ms += 20
+                    else:
+                        # SDK connection closed or rejected frame
+                        break
+
+                # Playout drain wait: allow the last pushed frames to play out
+                # (150 ms covers WebRTC jitter buffer drain)
+                await asyncio.sleep(0.15)
+                logger.info("tts playout complete: pushed=%dms", pushed_ms)
+                await self.emit({"type": "tts.finished", "sessionId": self.session_id})
+            finally:
+                if not producer.done():
+                    producer.cancel()
+                    try:
+                        await producer
+                    except asyncio.CancelledError:
+                        pass
         except asyncio.CancelledError:
+            self.receiver.clear_audio_buffer()
             raise
         except Exception as exc:
             logger.exception("TTS speak failed")
@@ -290,6 +334,7 @@ class RealSession:
                 await self.tts_task
             except asyncio.CancelledError:
                 pass
+        self.receiver.clear_audio_buffer()
         self.receiver.stop()
         if self.worker:
             await self.queue.put(None)
