@@ -75,9 +75,7 @@ class RealSession:
                 url=tts_url,
                 voice=os.getenv("TTS_VOICE", "serena"),
                 speed=float(os.getenv("TTS_SPEED", "1.0")),
-                instruct=os.getenv(
-                    "TTS_INSTRUCT", "用自然平稳的语速和清晰专业的语气朗读"
-                ),
+                instruct=os.getenv("TTS_INSTRUCT", ""),
                 language=os.getenv("TTS_LANGUAGE", "chinese"),
             )
             if tts_url
