@@ -15,7 +15,7 @@ import websockets
 from .agora_receiver import AgoraReceiver
 from .segmenter import PcmSegmenter, SegmentEvent, SegmenterConfig
 from .sensevoice import SenseVoiceClient
-from .tts import TTS_TARGET_RATE, PcmUpsampler2x, TtsClient
+from .tts import TTS_SOURCE_RATE, TTS_TARGET_RATE, PcmUpsampler2x, TtsClient
 
 logger = logging.getLogger(__name__)
 
