@@ -19,14 +19,14 @@ flowchart LR
 
 前置条件：OminiX-API/Qwen3-ASR 已在当前电脑的 `127.0.0.1:8080` 运行；VPS 子域已配置 HTTPS；VPS 持有 Agora App ID 与 App Certificate，用于动态签发短期 AccessToken2。
 
-当前 Mac 启动 OminiX Qwen3-ASR：
+当前 Mac 启动 OminiX Qwen3-ASR（单实例用 `start-ominix-asr.sh`；并发容量用实例池）：
 
 ```bash
 cd /Users/dev/Documents/projects/agora-sensevoice-demo/bridge
-bash start-ominix-asr.sh
+OMINIX_POOL_SIZE=8 bash start-ominix-pool.sh
 ```
 
-保持该终端运行，再在另一个终端启动 Bridge。
+实例池占用 `127.0.0.1:8080` 起的连续端口；Bridge 的 `.env` 用 `ASR_URLS` 列出池内全部转写端点（见 `.env.example`）。保持该终端运行，再在另一个终端启动 Bridge。
 
 1. Windows 构建并打包 VPS 控制面镜像，再上传 VPS。完整命令见 [`docs/WINDOWS_CODEX_HANDOFF.md`](docs/WINDOWS_CODEX_HANDOFF.md)。
 2. VPS 创建 `deploy/.env`，使用真实配置：
@@ -91,7 +91,7 @@ docs/           协议与真实演示检查清单
 - 会话 API 使用独立访问密钥；浏览器事件票据使用路径限定的 HttpOnly Cookie，不出现在 URL。
 - 提供 liveness/readiness、Nginx 边缘限流、会话过期回收和断线释放；Mac 上的 OminiX 与 Bridge 当前由操作员前台启动。
 - 文本通过 VPS WebSocket 回传，音频通过 Agora RTC；第一版不引入 RTM。
-- OminiX 当前是单路推理 worker，所以服务容量明确为 1；多 worker 路由是下一阶段。
+- 并发容量由 `SESSION_CAPACITY` 控制；Bridge 单进程承载多路 RTC 会话，并按 round-robin 把会话分发到本机 OminiX 实例池（`start-ominix-pool.sh`，池大小由 `OMINIX_POOL_SIZE` 控制）。
 
 ## 延时观测与汇报
 
@@ -109,7 +109,7 @@ python summarize_trace.py ~/Downloads/agora-asr-trace-*.json \
 
 导出文件包含识别文本，可能属于敏感数据；不要上传到无授权的日志或公共仓库。当前 OminiX API 没有内部队列/解码/MLX 推理字段，因此页面先把本机 HTTP 往返标为 `OminiX HTTP 往返`；若 OminiX 后续返回 `Server-Timing`，Bridge 已能解析并透传。
 
-下一阶段是企业 OIDC/SSO、Redis/PostgreSQL 会话与审计、多个 OminiX worker 调度、Prometheus/告警，并评估把 Agora Server SDK Bridge 迁至官方支持的 Linux 环境。
+下一阶段是企业 OIDC/SSO、Redis/PostgreSQL 会话与审计、Prometheus/告警，并评估把 Agora Server SDK Bridge 迁至官方支持的 Linux 环境。
 
 仓库仍保留 `mock-bridge`，仅供开发者隔离控制面故障，不属于部署或验收路径。
 

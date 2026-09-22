@@ -8,7 +8,7 @@ import os
 import random
 import signal
 import time
-from typing import Any, Awaitable, Callable, Dict, Optional, Tuple
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 
 import websockets
 
@@ -23,11 +23,20 @@ def env_float(name: str, default: float) -> float:
     return float(os.getenv(name, str(default)))
 
 
+def parse_asr_urls(urls_value: str, fallback_url: str = "") -> List[str]:
+    """Parse the comma-separated ASR_URLS pool, falling back to a single URL."""
+    urls = [url.strip() for url in urls_value.split(",") if url.strip()]
+    if not urls and fallback_url.strip():
+        urls = [fallback_url.strip()]
+    return urls
+
+
 class RealSession:
     def __init__(
         self,
         session_id: str,
         agora: Dict[str, Any],
+        asr_url: str,
         emit: Callable[[Dict[str, Any]], Awaitable[None]],
     ) -> None:
         self.session_id = session_id
@@ -37,7 +46,7 @@ class RealSession:
             SegmenterConfig(threshold_dbfs=env_float("VAD_THRESHOLD_DBFS", -38.0))
         )
         self.asr = SenseVoiceClient(
-            url=os.getenv("ASR_URL") or os.environ["SENSEVOICE_URL"],
+            url=asr_url,
             model=os.getenv("ASR_MODEL", os.getenv("SENSEVOICE_MODEL", "qwen3-asr")),
             api_key=os.getenv("ASR_API_KEY", os.getenv("SENSEVOICE_API_KEY", "")),
             language=os.getenv(
@@ -270,15 +279,29 @@ class MockSession:
 
 
 class BridgeApp:
-    def __init__(self, mode: str, ws_url: str, shared_secret: str) -> None:
+    def __init__(
+        self,
+        mode: str,
+        ws_url: str,
+        shared_secret: str,
+        asr_urls: Optional[List[str]] = None,
+        max_sessions: int = 64,
+    ) -> None:
         self.mode = mode
         self.ws_url = ws_url
         self.shared_secret = shared_secret
+        self.asr_urls = asr_urls or []
+        self.max_sessions = max_sessions
         self.websocket: Any = None
         self.send_lock = asyncio.Lock()
-        self.session: Optional[Any] = None
-        self.session_id: Optional[str] = None
+        self.sessions: Dict[str, Any] = {}
+        self._asr_rr_index = 0
         self.stopping = asyncio.Event()
+
+    def _next_asr_url(self) -> str:
+        url = self.asr_urls[self._asr_rr_index % len(self.asr_urls)]
+        self._asr_rr_index += 1
+        return url
 
     async def emit(self, payload: Dict[str, Any]) -> None:
         async with self.send_lock:
@@ -289,18 +312,33 @@ class BridgeApp:
         event_type = payload.get("type")
         session_id = payload.get("sessionId")
         if event_type == "session.start":
-            await self.stop_session(notify=False)
-            self.session_id = session_id
+            if session_id in self.sessions:
+                await self.stop_session(session_id, notify=False)
+            if len(self.sessions) >= self.max_sessions:
+                logger.warning("bridge at capacity; rejecting session %s", session_id)
+                await self.emit(
+                    {
+                        "type": "asr.error",
+                        "sessionId": session_id,
+                        "message": "Bridge is at its session capacity",
+                    }
+                )
+                return
             if self.mode == "mock":
-                self.session = MockSession(session_id, self.emit)
+                session = MockSession(session_id, self.emit)
             else:
-                if not (os.getenv("ASR_URL") or os.getenv("SENSEVOICE_URL")):
-                    raise RuntimeError("ASR_URL is required in real mode")
-                self.session = RealSession(session_id, payload["agora"], self.emit)
+                if not self.asr_urls:
+                    raise RuntimeError("ASR_URLS or ASR_URL is required in real mode")
+                session = RealSession(
+                    session_id, payload["agora"], self._next_asr_url(), self.emit
+                )
+            self.sessions[session_id] = session
             try:
-                await self.session.start()
+                await session.start()
                 await self.emit({"type": "session.ready", "sessionId": session_id})
-                logger.info("session ready: %s", session_id)
+                logger.info(
+                    "session ready: %s (active=%d)", session_id, len(self.sessions)
+                )
             except Exception as exc:
                 logger.exception("session startup failed")
                 await self.emit(
@@ -310,23 +348,27 @@ class BridgeApp:
                         "message": str(exc),
                     }
                 )
-                await self.stop_session(notify=False)
-        elif event_type == "utterance.commit" and session_id == self.session_id:
-            await self.session.commit()
-        elif event_type == "session.stop" and session_id == self.session_id:
-            await self.stop_session(notify=True)
+                await self.stop_session(session_id, notify=False)
+        elif event_type == "utterance.commit":
+            session = self.sessions.get(session_id)
+            if session is not None:
+                await session.commit()
+        elif event_type == "session.stop":
+            await self.stop_session(session_id, notify=True)
 
-    async def stop_session(self, notify: bool) -> None:
-        if self.session is None:
+    async def stop_session(self, session_id: Optional[str], notify: bool) -> None:
+        session = self.sessions.pop(session_id, None)
+        if session is None:
             return
-        old_id = self.session_id
         try:
-            await self.session.stop()
+            await session.stop()
         finally:
-            self.session = None
-            self.session_id = None
-        if notify and old_id:
-            await self.emit({"type": "session.closed", "sessionId": old_id})
+            if notify:
+                await self.emit({"type": "session.closed", "sessionId": session_id})
+
+    async def stop_all_sessions(self) -> None:
+        for session_id in list(self.sessions):
+            await self.stop_session(session_id, notify=False)
 
     async def run(self) -> None:
         backoff = 1.0
@@ -360,14 +402,14 @@ class BridgeApp:
                 logger.warning("bridge connection lost: %s", exc)
             finally:
                 self.websocket = None
-                await self.stop_session(notify=False)
+                await self.stop_all_sessions()
             if not self.stopping.is_set():
                 await asyncio.sleep(backoff + random.random() * 0.25)
                 backoff = min(backoff * 2, 20.0)
 
     async def stop(self) -> None:
         self.stopping.set()
-        await self.stop_session(notify=False)
+        await self.stop_all_sessions()
         if self.websocket is not None:
             await self.websocket.close()
         AgoraReceiver.shutdown_service()
@@ -377,7 +419,14 @@ async def async_main(args: argparse.Namespace) -> None:
     secret = os.getenv("BRIDGE_SHARED_SECRET", "")
     if len(secret) < 16:
         raise SystemExit("BRIDGE_SHARED_SECRET must contain at least 16 characters")
-    app = BridgeApp(args.mode, args.control_ws_url, secret)
+    asr_urls = parse_asr_urls(
+        os.getenv("ASR_URLS", ""),
+        os.getenv("ASR_URL") or os.getenv("SENSEVOICE_URL", ""),
+    )
+    if args.mode == "real" and not asr_urls:
+        raise SystemExit("ASR_URLS or ASR_URL is required in real mode")
+    max_sessions = int(os.getenv("BRIDGE_MAX_SESSIONS", "64"))
+    app = BridgeApp(args.mode, args.control_ws_url, secret, asr_urls, max_sessions)
     loop = asyncio.get_running_loop()
     for signal_name in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(signal_name, lambda: asyncio.create_task(app.stop()))

@@ -50,6 +50,7 @@ struct Config {
     browser_grant_ttl_seconds: u64,
     bridge_shared_secret: String,
     session_ttl_seconds: u64,
+    session_capacity: usize,
     demo_mode: bool,
 }
 
@@ -76,6 +77,7 @@ impl Config {
             browser_grant_ttl_seconds: env_u64("BROWSER_GRANT_TTL_SECONDS", 60)?,
             bridge_shared_secret: env::var("BRIDGE_SHARED_SECRET").unwrap_or_default(),
             session_ttl_seconds: env_u64("SESSION_TTL_SECONDS", 900)?,
+            session_capacity: env_u32("SESSION_CAPACITY", 1)? as usize,
             demo_mode,
         };
         config.validate()?;
@@ -88,6 +90,9 @@ impl Config {
         }
         if self.session_ttl_seconds == 0 || self.session_ttl_seconds > 3_600 {
             return Err("SESSION_TTL_SECONDS must be between 1 and 3600".into());
+        }
+        if self.session_capacity == 0 || self.session_capacity > 1_000 {
+            return Err("SESSION_CAPACITY must be between 1 and 1000".into());
         }
         if !(10..=300).contains(&self.browser_grant_ttl_seconds) {
             return Err("BROWSER_GRANT_TTL_SECONDS must be between 10 and 300".into());
@@ -564,18 +569,18 @@ async fn readyz(res: &mut Response) {
 async fn status(res: &mut Response) {
     let app = state();
     let inner = app.inner.lock().await;
-    let active_session = inner
+    let active_sessions = inner
         .sessions
         .values()
-        .find(|session| session.state != "closed")
-        .map(|session| json!({ "state": session.state }));
+        .filter(|session| session.state != "closed")
+        .count();
     res.render(Json(json!({
         "service": "agora-ominix-control-plane",
         "bridgeOnline": inner.bridge.is_some(),
         "demoMode": app.config.demo_mode,
         "accessProtected": !app.config.client_access_token.is_empty(),
-        "capacity": 1,
-        "activeSession": active_session,
+        "capacity": app.config.session_capacity,
+        "activeSessions": active_sessions,
     })));
 }
 
@@ -607,16 +612,17 @@ async fn create_session(req: &mut Request, res: &mut Response) {
         return;
     }
 
-    if inner
+    let active_sessions = inner
         .sessions
         .values()
-        .any(|session| session.state != "closed")
-    {
+        .filter(|session| session.state != "closed")
+        .count();
+    if active_sessions >= app.config.session_capacity {
         render_error(
             res,
             StatusCode::CONFLICT,
             "session_busy",
-            "The ASR worker is at its single-session capacity",
+            "The ASR service is at its configured session capacity",
         );
         return;
     }
@@ -1346,6 +1352,7 @@ mod tests {
             browser_grant_ttl_seconds: 60,
             bridge_shared_secret: "0123456789abcdef".into(),
             session_ttl_seconds: 900,
+            session_capacity: 1,
             demo_mode: true,
         }
     }
@@ -1406,6 +1413,19 @@ mod tests {
         let mut config = base_config();
         config.rtc_token_ttl_seconds = 900;
         assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn session_capacity_must_be_within_bounds() {
+        let mut config = base_config();
+        config.session_capacity = 0;
+        assert!(config.validate().is_err());
+
+        config.session_capacity = 1_001;
+        assert!(config.validate().is_err());
+
+        config.session_capacity = 50;
+        assert!(config.validate().is_ok());
     }
 
     #[test]

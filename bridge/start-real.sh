@@ -29,16 +29,31 @@ if [[ -z "${BRIDGE_SHARED_SECRET:-}" || "${BRIDGE_SHARED_SECRET}" == replace-* ]
   exit 1
 fi
 
-ASR_HEALTH_URL="${ASR_HEALTH_URL:-http://127.0.0.1:8080/health}"
+# Build the health-check list from ASR_URLS (comma-separated transcription
+# endpoints) when present; otherwise fall back to the single ASR_HEALTH_URL.
+health_urls=()
+if [[ -n "${ASR_URLS:-}" ]]; then
+  IFS=',' read -r -a asr_url_list <<< "$ASR_URLS"
+  for asr_url in "${asr_url_list[@]}"; do
+    asr_url="$(echo "$asr_url" | xargs)"
+    [[ -z "$asr_url" ]] && continue
+    health_urls+=("${asr_url%%/v1/*}/health")
+  done
+else
+  health_urls+=("${ASR_HEALTH_URL:-http://127.0.0.1:8080/health}")
+fi
+
 ASR_STARTUP_WAIT_SECONDS="${ASR_STARTUP_WAIT_SECONDS:-120}"
-deadline=$((SECONDS + ASR_STARTUP_WAIT_SECONDS))
-until curl --fail --silent "$ASR_HEALTH_URL" >/dev/null; do
-  if (( SECONDS >= deadline )); then
-    echo "ASR health check failed at $ASR_HEALTH_URL after ${ASR_STARTUP_WAIT_SECONDS}s." >&2
-    exit 1
-  fi
-  echo "Waiting for OminiX ASR at $ASR_HEALTH_URL..." >&2
-  sleep 2
+for health_url in "${health_urls[@]}"; do
+  deadline=$((SECONDS + ASR_STARTUP_WAIT_SECONDS))
+  until curl --fail --silent "$health_url" >/dev/null; do
+    if (( SECONDS >= deadline )); then
+      echo "ASR health check failed at $health_url after ${ASR_STARTUP_WAIT_SECONDS}s." >&2
+      exit 1
+    fi
+    echo "Waiting for OminiX ASR at $health_url..." >&2
+    sleep 2
+  done
 done
 
 exec .venv/bin/python -m bridge.main --mode real
