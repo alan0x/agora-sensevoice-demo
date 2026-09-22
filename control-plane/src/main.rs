@@ -445,8 +445,12 @@ async fn session_authorized(req: &Request, session_id: &str) -> bool {
     if client_authorized(req, &app.config) {
         return true;
     }
+    // The session ticket is issued under two distinct names on purpose:
+    // cookie jars replace same-named cookies, so a single name for both the
+    // WebSocket path and the API path would silently drop one of them.
     let ticket = req
         .cookie("asr_session")
+        .or_else(|| req.cookie("asr_session_api"))
         .map(|cookie| cookie.value().to_owned())
         .unwrap_or_default();
     let inner = app.inner.lock().await;
@@ -481,7 +485,7 @@ fn session_cookie(session: &Session, config: &Config) -> Cookie<'static> {
 }
 
 fn session_api_cookie(session: &Session, config: &Config) -> Cookie<'static> {
-    Cookie::build(("asr_session", session.ticket.clone()))
+    Cookie::build(("asr_session_api", session.ticket.clone()))
         .path(format!("/api/v1/sessions/{}", session.id))
         .http_only(true)
         .secure(config.public_base_url.starts_with("https://"))
