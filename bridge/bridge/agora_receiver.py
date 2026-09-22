@@ -187,16 +187,20 @@ class AgoraReceiver:
             self.stop()
             raise RuntimeError("Agora publish_audio failed: " + str(result))
 
+    def push_ready(self) -> bool:
+        """True when the SDK has drained the previously pushed PCM buffer."""
+        if self.connection is None:
+            return False
+        completed = self.connection.is_push_to_rtc_completed()
+        return not (isinstance(completed, bool) and not completed)
+
     def push_pcm(self, pcm: bytes, sample_rate: int = 48_000, channels: int = 1) -> bool:
         """Push one PCM frame toward the RTC channel (used for TTS playback).
 
-        Returns False when the connection is gone or the SDK is still busy with
-        the previous frame, so the caller can wait and retry.
+        Returns False when the connection is gone or the SDK rejects the
+        buffer; callers pace themselves via push_ready().
         """
         if self.connection is None or not pcm:
-            return False
-        completed = self.connection.is_push_to_rtc_completed()
-        if isinstance(completed, bool) and not completed:
             return False
         # The SDK takes the buffer via ctypes.from_buffer, which requires a
         # writable object; immutable bytes raise "underlying buffer is not

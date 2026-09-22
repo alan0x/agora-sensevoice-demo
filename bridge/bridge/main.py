@@ -227,40 +227,47 @@ class RealSession:
         try:
             upsampler = PcmUpsampler2x()
             pending = bytearray()
-            quantum = int(TTS_TARGET_RATE * 2 * 0.01)  # keep pushes 10 ms aligned
-            prebuffer = int(TTS_TARGET_RATE * 2 * 0.4)  # start after ~400 ms
-            max_push = int(TTS_TARGET_RATE * 2 * 0.5)  # then push ~500 ms at a time
+            quantum = int(TTS_TARGET_RATE * 2 * 0.01)  # 10 ms alignment
+            first_push = int(TTS_TARGET_RATE * 2 * 0.8)  # start after ~800 ms
+            max_push = int(TTS_TARGET_RATE * 2 * 2.5)  # refill up to ~2.5 s
             started_playback = False
+            stream_done = False
 
-            async def push_available() -> None:
-                # Large buffers let the SDK pace playback itself; small frames
-                # pushed on an asyncio timer starve the playout buffer and
-                # produce choppy audio.
-                nonlocal started_playback
-                threshold = max_push if started_playback else prebuffer
-                while len(pending) >= threshold:
-                    size = min(len(pending), max_push)
-                    size -= size % quantum
-                    if size == 0:
-                        return
-                    frame = bytearray(pending[:size])
-                    del pending[:size]
-                    while not self.receiver.push_pcm(frame, TTS_TARGET_RATE, 1):
-                        await asyncio.sleep(0.01)
-                    started_playback = True
-                    threshold = max_push
+            async def produce() -> None:
+                nonlocal stream_done
+                async for chunk in self.tts.stream_pcm(text, voice):
+                    pending.extend(upsampler.feed(chunk))
+                stream_done = True
 
-            async for chunk in self.tts.stream_pcm(text, voice):
-                pending += upsampler.feed(chunk)
-                await push_available()
-            if pending:
-                remainder = len(pending) % quantum
-                if remainder:
-                    pending.extend(b"\x00" * (quantum - remainder))
-                while not self.receiver.push_pcm(
-                    bytearray(pending), TTS_TARGET_RATE, 1
-                ):
-                    await asyncio.sleep(0.01)
+            producer = asyncio.create_task(produce())
+            try:
+                # Refill loop mirroring the upstream SDK example: hand the SDK
+                # a large buffer every time it drains the previous one. Small
+                # gated pushes starve playout every few hundred ms and stutter.
+                while True:
+                    if self.receiver.push_ready():
+                        threshold = 1 if started_playback else first_push
+                        if len(pending) >= threshold or (stream_done and pending):
+                            if stream_done and len(pending) % quantum:
+                                pending.extend(
+                                    b"\x00" * (quantum - len(pending) % quantum)
+                                )
+                            size = min(len(pending), max_push)
+                            size -= size % quantum
+                            frame = bytearray(pending[:size])
+                            if self.receiver.push_pcm(frame, TTS_TARGET_RATE, 1):
+                                del pending[:size]
+                                started_playback = True
+                    if stream_done and not pending and self.receiver.push_ready():
+                        break
+                    await asyncio.sleep(0.02)
+            finally:
+                if not producer.done():
+                    producer.cancel()
+                    try:
+                        await producer
+                    except asyncio.CancelledError:
+                        pass
             await self.emit({"type": "tts.finished", "sessionId": self.session_id})
         except asyncio.CancelledError:
             raise
