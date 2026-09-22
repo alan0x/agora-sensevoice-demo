@@ -16,6 +16,8 @@ const ui = {
   agoraDot: document.querySelector("#agoraDot"),
   bridgeDot: document.querySelector("#bridgeDot"),
   asrDot: document.querySelector("#asrDot"),
+  ttsText: document.querySelector("#ttsText"),
+  speak: document.querySelector("#speakBtn"),
   level: document.querySelector(".audio-level"),
   levelBars: [...document.querySelectorAll(".audio-level i")],
   latestLatency: document.querySelector("#latestLatency"),
@@ -71,6 +73,8 @@ function setRunning(running) {
   ui.mute.disabled = !running;
   ui.commit.disabled = !running;
   ui.stop.disabled = !running;
+  ui.ttsText.disabled = !running;
+  ui.speak.disabled = !running;
 }
 
 function createSpeechState() {
@@ -485,6 +489,21 @@ function handleEvent(event, receivedAt = performance.now()) {
     appendFinal(`⚠ ${event.message || "ASR 发生错误"}`);
     return;
   }
+  if (event.type === "tts.started") {
+    setDot(ui.asrDot, "busy");
+    log("TTS 朗读开始", { characters: event.characters });
+    return;
+  }
+  if (event.type === "tts.finished") {
+    setDot(ui.asrDot, "on");
+    log("TTS 朗读完成");
+    return;
+  }
+  if (event.type === "tts.error") {
+    setDot(ui.asrDot, "");
+    appendFinal(`⚠ TTS 失败:${event.message || "未知错误"}`);
+    return;
+  }
   if (event.type === "session.closed") {
     cleanupLocal();
     return;
@@ -517,6 +536,12 @@ async function joinAgora(config) {
   const client = window.AgoraRTC.createClient({ mode: "live", codec: "vp8" });
   client.on("network-quality", (quality) => {
     runtime.networkQuality = quality;
+  });
+  client.on("user-published", async (user, mediaType) => {
+    if (mediaType !== "audio") return;
+    await client.subscribe(user, mediaType);
+    user.audioTrack?.play();
+    log("已订阅远端音频(TTS 播放)", { uid: user.uid });
   });
   await client.setClientRole("host");
   await client.join(config.appId, config.channel, config.token, config.uid);
@@ -608,6 +633,21 @@ async function commit() {
   }
 }
 
+async function speak() {
+  const text = ui.ttsText.value.trim();
+  if (!runtime.session || !text) return;
+  try {
+    await api(`/api/v1/sessions/${runtime.session.sessionId}/speak`, {
+      method: "POST",
+      body: JSON.stringify({ text }),
+    });
+    log("已请求朗读", { characters: text.length });
+    ui.ttsText.value = "";
+  } catch (error) {
+    log("朗读请求失败", { error: error.message });
+  }
+}
+
 async function stop() {
   const session = runtime.session;
   if (session) {
@@ -655,6 +695,10 @@ ui.accessKey.addEventListener("change", () => {
 });
 ui.mute.addEventListener("click", toggleMute);
 ui.commit.addEventListener("click", commit);
+ui.speak.addEventListener("click", speak);
+ui.ttsText.addEventListener("keydown", (event) => {
+  if (event.key === "Enter") speak();
+});
 ui.stop.addEventListener("click", stop);
 ui.exportMetrics.addEventListener("click", exportObservations);
 ui.clearMetrics.addEventListener("click", clearObservations);

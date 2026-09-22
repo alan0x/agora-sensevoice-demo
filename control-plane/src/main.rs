@@ -779,6 +779,112 @@ async fn commit_utterance(req: &mut Request, res: &mut Response) {
     forward_session_command(req, res, "utterance.commit").await;
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct SpeakRequest {
+    text: String,
+    voice: Option<String>,
+}
+
+fn valid_speak_text(value: &str) -> bool {
+    !value.is_empty()
+        && value.chars().count() <= 500
+        && !value.chars().any(char::is_control)
+}
+
+fn valid_tts_voice(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+}
+
+#[handler]
+async fn speak_text(req: &mut Request, res: &mut Response) {
+    let Some(id) = req.param::<String>("id") else {
+        render_error(
+            res,
+            StatusCode::BAD_REQUEST,
+            "bad_session_id",
+            "Missing session id",
+        );
+        return;
+    };
+    if !require_session_access(req, res, &id).await {
+        return;
+    }
+    let request = match req.parse_json::<SpeakRequest>().await {
+        Ok(request) => request,
+        Err(_) => {
+            render_error(
+                res,
+                StatusCode::BAD_REQUEST,
+                "invalid_request",
+                "A JSON body with a text field is required",
+            );
+            return;
+        }
+    };
+    let text = request.text.trim().to_owned();
+    if !valid_speak_text(&text) {
+        render_error(
+            res,
+            StatusCode::BAD_REQUEST,
+            "invalid_text",
+            "text must contain 1-500 non-control characters",
+        );
+        return;
+    }
+    let voice = request
+        .voice
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty());
+    if voice.as_deref().is_some_and(|value| !valid_tts_voice(value)) {
+        render_error(
+            res,
+            StatusCode::BAD_REQUEST,
+            "invalid_voice",
+            "voice must be 1-64 ASCII letters, digits, '-' or '_'",
+        );
+        return;
+    }
+    let app = state();
+    let inner = app.inner.lock().await;
+    if !inner.sessions.contains_key(&id) {
+        render_error(
+            res,
+            StatusCode::NOT_FOUND,
+            "session_not_found",
+            "Session not found",
+        );
+        return;
+    }
+    let mut event = json!({
+        "type": "tts.speak",
+        "sessionId": id,
+        "text": text,
+    });
+    if let Some(voice) = voice {
+        event["voice"] = json!(voice);
+    }
+    let sent = inner
+        .bridge
+        .as_ref()
+        .is_some_and(|bridge| send_json(&bridge.tx, &event));
+    if !sent {
+        render_error(
+            res,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "bridge_offline",
+            "The LAN bridge is not connected",
+        );
+        return;
+    }
+    res.status_code(StatusCode::ACCEPTED);
+    res.render(Json(json!({ "accepted": true })));
+}
+
 #[handler]
 async fn delete_session(req: &mut Request, res: &mut Response) {
     let Some(id) = req.param::<String>("id") else {
@@ -1000,7 +1106,8 @@ async fn handle_bridge_event(app: &Arc<AppState>, text: &str) {
         "session.ready" => session.state = "ready".into(),
         "asr.error" => session.state = "error".into(),
         "session.closed" => session.state = "closed".into(),
-        "asr.partial" | "asr.final" | "trace.update" => {}
+        "asr.partial" | "asr.final" | "trace.update" | "tts.started" | "tts.finished"
+        | "tts.error" => {}
         _ => {
             warn!(session_id, event_type, "ignored unknown bridge event");
             return;
@@ -1316,7 +1423,8 @@ async fn main() {
         .push(
             Router::with_path("sessions/{id}")
                 .delete(delete_session)
-                .push(Router::with_path("commit").post(commit_utterance)),
+                .push(Router::with_path("commit").post(commit_utterance))
+                .push(Router::with_path("speak").post(speak_text)),
         );
     let router = Router::new()
         .hoop(Logger::new())
@@ -1430,6 +1538,24 @@ mod tests {
 
         config.session_capacity = 50;
         assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn speak_text_validation() {
+        assert!(valid_speak_text("你好，世界"));
+        assert!(!valid_speak_text(""));
+        assert!(!valid_speak_text("有\u{0007}控制符"));
+        assert!(valid_speak_text(&"字".repeat(500)));
+        assert!(!valid_speak_text(&"字".repeat(501)));
+    }
+
+    #[test]
+    fn tts_voice_validation() {
+        assert!(valid_tts_voice("vivian"));
+        assert!(valid_tts_voice("ryan-2_old"));
+        assert!(!valid_tts_voice(""));
+        assert!(!valid_tts_voice("not a voice"));
+        assert!(!valid_tts_voice(&"a".repeat(65)));
     }
 
     #[test]

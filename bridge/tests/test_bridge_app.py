@@ -99,6 +99,25 @@ class BridgeAppMultiSessionTest(unittest.IsolatedAsyncioTestCase):
             picks, ["http://a/", "http://b/", "http://a/", "http://b/", "http://a/"]
         )
 
+    async def test_tts_speak_routed_by_session_id(self):
+        app, sent = self.make_app()
+        await app.handle({"type": "session.start", "sessionId": "s1"})
+        await app.handle({"type": "tts.speak", "sessionId": "s1", "text": "你好"})
+
+        started = [p for p in sent if p["type"] == "tts.started"]
+        finished = [p for p in sent if p["type"] == "tts.finished"]
+        self.assertEqual(len(started), 1)
+        self.assertEqual(started[0]["sessionId"], "s1")
+        self.assertEqual(started[0]["characters"], 2)
+        self.assertEqual(len(finished), 1)
+
+        # Unknown session ids are ignored without raising.
+        await app.handle({"type": "tts.speak", "sessionId": "ghost", "text": "x"})
+        self.assertEqual(
+            len([p for p in sent if p["type"] == "tts.started"]), 1
+        )
+        await app.stop_all_sessions()
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -39,6 +39,7 @@ class AgoraReceiver:
             from agora.rtc.agora_service import AgoraService, AgoraServiceConfig
             from agora.rtc.agora_base import (
                 AudioProfileType,
+                AudioPublishType,
                 AudioScenarioType,
                 AudioSubscriptionOptions,
                 ChannelProfileType,
@@ -135,9 +136,10 @@ class AgoraReceiver:
         )
         publish_config = RtcConnectionPublishConfig(
             audio_profile=AudioProfileType.AUDIO_PROFILE_DEFAULT,
-            audio_scenario=AudioScenarioType.AUDIO_SCENARIO_DEFAULT,
-            is_publish_audio=False,
+            audio_scenario=AudioScenarioType.AUDIO_SCENARIO_AI_SERVER,
+            is_publish_audio=True,
             is_publish_video=False,
+            audio_publish_type=AudioPublishType.AUDIO_PUBLISH_TYPE_PCM,
         )
         connection = AgoraReceiver._service.create_rtc_connection(
             connection_config, publish_config
@@ -180,6 +182,24 @@ class AgoraReceiver:
         if isinstance(result, int) and result < 0:
             self.stop()
             raise RuntimeError("Agora connection failed: " + str(result))
+        result = connection.publish_audio()
+        if isinstance(result, int) and result < 0:
+            self.stop()
+            raise RuntimeError("Agora publish_audio failed: " + str(result))
+
+    def push_pcm(self, pcm: bytes, sample_rate: int = 48_000, channels: int = 1) -> bool:
+        """Push one PCM frame toward the RTC channel (used for TTS playback).
+
+        Returns False when the connection is gone or the SDK is still busy with
+        the previous frame, so the caller can wait and retry.
+        """
+        if self.connection is None or not pcm:
+            return False
+        completed = self.connection.is_push_to_rtc_completed()
+        if isinstance(completed, bool) and not completed:
+            return False
+        result = self.connection.push_audio_pcm_data(pcm, sample_rate, channels)
+        return not (isinstance(result, int) and result < 0)
 
     def stop(self) -> None:
         if self.connection is None:

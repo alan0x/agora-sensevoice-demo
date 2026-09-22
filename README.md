@@ -92,6 +92,7 @@ docs/           协议与真实演示检查清单
 - 提供 liveness/readiness、Nginx 边缘限流、会话过期回收和断线释放；Mac 上的 OminiX 与 Bridge 当前由操作员前台启动。
 - 文本通过 VPS WebSocket 回传，音频通过 Agora RTC；第一版不引入 RTM。
 - 并发容量由 `SESSION_CAPACITY` 控制；Bridge 单进程承载多路 RTC 会话，并按 round-robin 把会话分发到本机 OminiX 实例池（`start-ominix-pool.sh`，池大小由 `OMINIX_POOL_SIZE` 控制）。
+- 支持文字转语音双向链路：页面提交文字，Bridge 调用独立 OminiX TTS 实例（`start-ominix-tts.sh`）合成 24 kHz PCM，升采样到 48 kHz 后发布进 RTC 频道播放（`TTS_URL`/`TTS_VOICE` 配置；TTS 与 ASR 分实例，避免互相阻塞）。
 
 ## 延时观测与汇报
 

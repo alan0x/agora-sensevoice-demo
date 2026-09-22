@@ -76,6 +76,17 @@
             <button id="muteBtn" disabled>静音</button>
             <button id="commitBtn" disabled>立即断句</button>
           </div>
+          <label class="access-field" id="ttsField">
+            <span>文字转语音</span>
+            <input
+              id="ttsText"
+              type="text"
+              maxlength="500"
+              placeholder="输入文字，由 Bridge 朗读进频道"
+              disabled
+            />
+          </label>
+          <button id="speakBtn" disabled>朗读到频道</button>
           <button id="stopBtn" class="danger" disabled>结束会话</button>
 
           <dl class="session-meta">

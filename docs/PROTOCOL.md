@@ -10,8 +10,9 @@ Audio never flows through the VPS.
 - `GET /api/v1/status`: public availability and capacity without credential or session IDs.
 - `POST /api/v1/browser-grants`: server-to-server exchange for a short-lived,
   one-time browser grant. Requires `Authorization: Bearer <OCTOS_SERVICE_TOKEN>`.
-- `POST /api/v1/sessions`: allocate the single ASR worker session.
+- `POST /api/v1/sessions`: allocate a session, up to `SESSION_CAPACITY` concurrent sessions.
 - `POST /api/v1/sessions/{id}/commit`: force an utterance boundary.
+- `POST /api/v1/sessions/{id}/speak`: synthesize `{"text":"...","voice":"optional"}` with Qwen3-TTS and play it into the session's RTC channel.
 - `DELETE /api/v1/sessions/{id}`: stop the session.
 - `GET /ws/client/{id}`: browser text-event WebSocket, authenticated by a path-scoped HttpOnly cookie.
 
@@ -47,6 +48,7 @@ Control-plane to bridge:
 ```json
 {"type":"session.start","sessionId":"...","agora":{"appId":"...","channel":"asr-...","uid":9001,"token":"007..."}}
 {"type":"utterance.commit","sessionId":"..."}
+{"type":"tts.speak","sessionId":"...","text":"要朗读的文字","voice":"vivian"}
 {"type":"session.stop","sessionId":"..."}
 ```
 
@@ -58,8 +60,15 @@ Bridge to control-plane:
 {"type":"asr.final","sessionId":"...","utteranceId":"...:1","seq":2,"text":"最终结果","metrics":{}}
 {"type":"trace.update","sessionId":"...","utteranceId":"...:1","seq":2,"eventType":"asr.final","metrics":{"bridge":{"resultWebSocketSendMs":1.2}}}
 {"type":"asr.error","sessionId":"...","message":"..."}
+{"type":"tts.started","sessionId":"...","characters":42}
+{"type":"tts.finished","sessionId":"..."}
+{"type":"tts.error","sessionId":"...","message":"..."}
 {"type":"session.closed","sessionId":"..."}
 ```
+
+For TTS playback the bridge streams 24 kHz PCM from a dedicated OminiX TTS
+instance, upsamples it to 48 kHz, and publishes it into the session's RTC
+channel; the browser subscribes and plays the remote audio track.
 
 Browser to control-plane over the authenticated client WebSocket:
 
@@ -84,8 +93,8 @@ Wall-clock timestamps are diagnostic only and MUST NOT be subtracted across host
 
 ## Lifecycle and current capacity
 
-- One active session because the current OminiX worker is single-slot.
+- Concurrency is bounded by `SESSION_CAPACITY` on the control plane and by `BRIDGE_MAX_SESSIONS` / the OminiX instance pool on the bridge host.
 - Sessions live in memory and expire automatically; a restart requires a new session.
-- Bridge or browser event-socket disconnect releases the active session.
+- Bridge or browser event-socket disconnect releases the affected sessions.
 - Each session uses an independent channel and independent short-lived RTC tokens.
 - ASR results return over the control-plane WebSocket, not Agora RTM.

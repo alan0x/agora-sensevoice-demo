@@ -15,6 +15,7 @@ import websockets
 from .agora_receiver import AgoraReceiver
 from .segmenter import PcmSegmenter, SegmentEvent, SegmenterConfig
 from .sensevoice import SenseVoiceClient
+from .tts import TTS_TARGET_RATE, PcmUpsampler2x, TtsClient
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +39,7 @@ class RealSession:
         agora: Dict[str, Any],
         asr_url: str,
         emit: Callable[[Dict[str, Any]], Awaitable[None]],
+        tts_url: Optional[str] = None,
     ) -> None:
         self.session_id = session_id
         self.emit = emit
@@ -68,6 +70,12 @@ class RealSession:
         self.partial_task: Optional[asyncio.Task] = None
         self.sequence = 0
         self.network_stats: Dict[str, Any] = {}
+        self.tts = (
+            TtsClient(url=tts_url, voice=os.getenv("TTS_VOICE", "vivian"))
+            if tts_url
+            else None
+        )
+        self.tts_task: Optional[asyncio.Task] = None
 
     async def start(self) -> None:
         await self.receiver.start()
@@ -180,7 +188,79 @@ class RealSession:
         for event in self.segmenter.commit():
             await self._handle_segment(event)
 
+    async def speak(self, text: str, voice: Optional[str] = None) -> None:
+        if self.tts is None:
+            await self.emit(
+                {
+                    "type": "tts.error",
+                    "sessionId": self.session_id,
+                    "message": "TTS is not configured on this bridge",
+                }
+            )
+            return
+        text = text.strip()
+        if not text:
+            return
+        # Barge-in: a new speak request interrupts the current playback.
+        if self.tts_task and not self.tts_task.done():
+            self.tts_task.cancel()
+            try:
+                await self.tts_task
+            except asyncio.CancelledError:
+                pass
+        self.tts_task = asyncio.create_task(self._speak(text, voice))
+
+    async def _speak(self, text: str, voice: Optional[str]) -> None:
+        await self.emit(
+            {
+                "type": "tts.started",
+                "sessionId": self.session_id,
+                "characters": len(text),
+            }
+        )
+        try:
+            upsampler = PcmUpsampler2x()
+            buffer = bytearray()
+            frame_bytes = int(TTS_TARGET_RATE * 2 * 0.02)  # 20 ms mono 16-bit
+            frame_seconds = frame_bytes / (TTS_TARGET_RATE * 2)
+            next_deadline = time.perf_counter()
+            async for chunk in self.tts.stream_pcm(text, voice):
+                buffer += upsampler.feed(chunk)
+                while len(buffer) >= frame_bytes:
+                    frame = bytes(buffer[:frame_bytes])
+                    del buffer[:frame_bytes]
+                    while not self.receiver.push_pcm(frame, TTS_TARGET_RATE, 1):
+                        await asyncio.sleep(0.005)
+                    next_deadline += frame_seconds
+                    delay = next_deadline - time.perf_counter()
+                    if delay > 0:
+                        await asyncio.sleep(delay)
+            if buffer:
+                # Pad the tail to a whole frame so the SDK always gets a
+                # well-formed 20 ms PCM frame.
+                tail = bytes(buffer).ljust(frame_bytes, b"\x00")
+                while not self.receiver.push_pcm(tail, TTS_TARGET_RATE, 1):
+                    await asyncio.sleep(0.005)
+            await self.emit({"type": "tts.finished", "sessionId": self.session_id})
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.exception("TTS speak failed")
+            await self.emit(
+                {
+                    "type": "tts.error",
+                    "sessionId": self.session_id,
+                    "message": str(exc),
+                }
+            )
+
     async def stop(self) -> None:
+        if self.tts_task and not self.tts_task.done():
+            self.tts_task.cancel()
+            try:
+                await self.tts_task
+            except asyncio.CancelledError:
+                pass
         self.receiver.stop()
         if self.worker:
             await self.queue.put(None)
@@ -188,6 +268,8 @@ class RealSession:
         if self.partial_task and not self.partial_task.done():
             self.partial_task.cancel()
         await self.asr.close()
+        if self.tts is not None:
+            await self.tts.close()
 
 
 class MockSession:
@@ -269,6 +351,17 @@ class MockSession:
             }
         )
 
+    async def speak(self, text: str, voice: Optional[str] = None) -> None:
+        await self.emit(
+            {
+                "type": "tts.started",
+                "sessionId": self.session_id,
+                "characters": len(text),
+            }
+        )
+        await asyncio.sleep(0.3)
+        await self.emit({"type": "tts.finished", "sessionId": self.session_id})
+
     async def stop(self) -> None:
         if self.task and not self.task.done():
             self.task.cancel()
@@ -286,12 +379,14 @@ class BridgeApp:
         shared_secret: str,
         asr_urls: Optional[List[str]] = None,
         max_sessions: int = 64,
+        tts_url: Optional[str] = None,
     ) -> None:
         self.mode = mode
         self.ws_url = ws_url
         self.shared_secret = shared_secret
         self.asr_urls = asr_urls or []
         self.max_sessions = max_sessions
+        self.tts_url = tts_url
         self.websocket: Any = None
         self.send_lock = asyncio.Lock()
         self.sessions: Dict[str, Any] = {}
@@ -330,7 +425,11 @@ class BridgeApp:
                 if not self.asr_urls:
                     raise RuntimeError("ASR_URLS or ASR_URL is required in real mode")
                 session = RealSession(
-                    session_id, payload["agora"], self._next_asr_url(), self.emit
+                    session_id,
+                    payload["agora"],
+                    self._next_asr_url(),
+                    self.emit,
+                    tts_url=self.tts_url,
                 )
             self.sessions[session_id] = session
             try:
@@ -353,6 +452,10 @@ class BridgeApp:
             session = self.sessions.get(session_id)
             if session is not None:
                 await session.commit()
+        elif event_type == "tts.speak":
+            session = self.sessions.get(session_id)
+            if session is not None:
+                await session.speak(payload.get("text", ""), payload.get("voice"))
         elif event_type == "session.stop":
             await self.stop_session(session_id, notify=True)
 
@@ -426,7 +529,10 @@ async def async_main(args: argparse.Namespace) -> None:
     if args.mode == "real" and not asr_urls:
         raise SystemExit("ASR_URLS or ASR_URL is required in real mode")
     max_sessions = int(os.getenv("BRIDGE_MAX_SESSIONS", "64"))
-    app = BridgeApp(args.mode, args.control_ws_url, secret, asr_urls, max_sessions)
+    tts_url = os.getenv("TTS_URL", "").strip() or None
+    app = BridgeApp(
+        args.mode, args.control_ws_url, secret, asr_urls, max_sessions, tts_url
+    )
     loop = asyncio.get_running_loop()
     for signal_name in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(signal_name, lambda: asyncio.create_task(app.stop()))
