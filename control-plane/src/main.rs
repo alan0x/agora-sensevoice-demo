@@ -1,4 +1,5 @@
 mod agora_token;
+mod livekit_token;
 
 use std::{
     collections::HashMap,
@@ -30,6 +31,7 @@ use tracing::{error, info, warn};
 use uuid::Uuid;
 
 use crate::agora_token::{RtcRole, build_rtc_token, validate_credential};
+use crate::livekit_token::{build_livekit_token, validate_livekit_url};
 
 static APP_STATE: OnceLock<Arc<AppState>> = OnceLock::new();
 
@@ -39,8 +41,12 @@ struct Config {
     static_dir: PathBuf,
     public_base_url: String,
     allowed_origin: Option<String>,
+    rtc_provider: String,
     agora_app_id: String,
     agora_app_certificate: String,
+    livekit_url: String,
+    livekit_api_key: String,
+    livekit_api_secret: String,
     channel_prefix: String,
     client_uid: u32,
     bridge_uid: u32,
@@ -66,8 +72,14 @@ impl Config {
             allowed_origin: env::var("ALLOWED_ORIGIN")
                 .ok()
                 .filter(|value| !value.trim().is_empty()),
+            rtc_provider: env_or("RTC_PROVIDER", "agora"),
             agora_app_id: env::var("AGORA_APP_ID").unwrap_or_default(),
             agora_app_certificate: env::var("AGORA_APP_CERTIFICATE").unwrap_or_default(),
+            livekit_url: env_or("LIVEKIT_URL", "")
+                .trim_end_matches('/')
+                .to_owned(),
+            livekit_api_key: env::var("LIVEKIT_API_KEY").unwrap_or_default(),
+            livekit_api_secret: env::var("LIVEKIT_API_SECRET").unwrap_or_default(),
             channel_prefix: env_or("RTC_CHANNEL_PREFIX", "asr"),
             client_uid: env_u32("RTC_CLIENT_UID", 1001)?,
             bridge_uid: env_u32("RTC_BRIDGE_UID", 9001)?,
@@ -129,9 +141,25 @@ impl Config {
                 "RTC_CHANNEL_PREFIX must contain 1-24 ASCII letters, digits, '-' or '_'".into(),
             );
         }
+        if self.rtc_provider != "agora" && self.rtc_provider != "livekit" {
+            return Err("RTC_PROVIDER must be \"agora\" or \"livekit\"".into());
+        }
         if !self.demo_mode {
-            validate_credential("AGORA_APP_ID", &self.agora_app_id)?;
-            validate_credential("AGORA_APP_CERTIFICATE", &self.agora_app_certificate)?;
+            if self.rtc_provider == "agora" {
+                validate_credential("AGORA_APP_ID", &self.agora_app_id)?;
+                validate_credential("AGORA_APP_CERTIFICATE", &self.agora_app_certificate)?;
+            } else {
+                validate_livekit_url(&self.livekit_url)?;
+                if !self.livekit_url.starts_with("wss://") {
+                    return Err("LIVEKIT_URL must use wss:// when DEMO_MODE=false".into());
+                }
+                if self.livekit_api_key.len() < 8 {
+                    return Err("LIVEKIT_API_KEY must contain at least 8 characters".into());
+                }
+                if self.livekit_api_secret.len() < 16 {
+                    return Err("LIVEKIT_API_SECRET must contain at least 16 characters".into());
+                }
+            }
             if self.client_access_token.len() < 24 {
                 return Err(
                     "CLIENT_ACCESS_TOKEN must contain at least 24 characters when DEMO_MODE=false"
@@ -203,9 +231,6 @@ fn env_u64(name: &str, default: u64) -> Result<u64, String> {
 struct Session {
     id: String,
     ticket: String,
-    channel: String,
-    client_uid: u32,
-    bridge_uid: u32,
     state: String,
     expires_at_ms: u64,
     owner_subject: Option<String>,
@@ -582,6 +607,7 @@ async fn status(res: &mut Response) {
         "service": "agora-ominix-control-plane",
         "bridgeOnline": inner.bridge.is_some(),
         "demoMode": app.config.demo_mode,
+        "rtcProvider": app.config.rtc_provider,
         "accessProtected": !app.config.client_access_token.is_empty(),
         "capacity": app.config.session_capacity,
         "activeSessions": active_sessions,
@@ -652,8 +678,80 @@ async fn create_session(req: &mut Request, res: &mut Response) {
     let now = unix_ms();
     let id = Uuid::new_v4().to_string();
     let channel = format!("{}-{}", app.config.channel_prefix, Uuid::new_v4().simple());
-    let (client_rtc_token, bridge_rtc_token) = if app.config.demo_mode {
-        (String::new(), String::new())
+    // Provider-branched credentials: the bridge fragment goes into the
+    // session.start event, the client fragment into the HTTP response.
+    let (bridge_cred, client_cred) = if app.config.demo_mode {
+        (
+            json!({"agora": {
+                "appId": "",
+                "channel": channel,
+                "uid": app.config.bridge_uid,
+                "token": "",
+            }}),
+            json!({"agora": {
+                "appId": "",
+                "channel": channel,
+                "uid": app.config.client_uid,
+                "token": "",
+            }}),
+        )
+    } else if app.config.rtc_provider == "livekit" {
+        let client_identity = format!("client-{}", app.config.client_uid);
+        let bridge_identity = format!("bridge-{}", app.config.bridge_uid);
+        let client_token = match build_livekit_token(
+            &app.config.livekit_api_key,
+            &app.config.livekit_api_secret,
+            &client_identity,
+            &channel,
+            true,
+            app.config.rtc_token_ttl_seconds,
+        ) {
+            Ok(token) => token,
+            Err(error) => {
+                error!(%error, "failed to create client LiveKit token");
+                render_error(
+                    res,
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "token_generation_failed",
+                    "Could not issue RTC credentials",
+                );
+                return;
+            }
+        };
+        let bridge_token = match build_livekit_token(
+            &app.config.livekit_api_key,
+            &app.config.livekit_api_secret,
+            &bridge_identity,
+            &channel,
+            true,
+            app.config.rtc_token_ttl_seconds,
+        ) {
+            Ok(token) => token,
+            Err(error) => {
+                error!(%error, "failed to create bridge LiveKit token");
+                render_error(
+                    res,
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "token_generation_failed",
+                    "Could not issue RTC credentials",
+                );
+                return;
+            }
+        };
+        (
+            json!({"livekit": {
+                "url": app.config.livekit_url,
+                "room": channel,
+                "identity": bridge_identity,
+                "token": bridge_token,
+            }}),
+            json!({"livekit": {
+                "url": app.config.livekit_url,
+                "room": channel,
+                "identity": client_identity,
+                "token": client_token,
+            }}),
+        )
     } else {
         let client = match build_rtc_token(
             &app.config.agora_app_id,
@@ -695,30 +793,39 @@ async fn create_session(req: &mut Request, res: &mut Response) {
                 return;
             }
         };
-        (client, bridge)
+        (
+            json!({"agora": {
+                "appId": app.config.agora_app_id,
+                "channel": channel,
+                "uid": app.config.bridge_uid,
+                "token": bridge,
+            }}),
+            json!({"agora": {
+                "appId": app.config.agora_app_id,
+                "channel": channel,
+                "uid": app.config.client_uid,
+                "token": client,
+            }}),
+        )
     };
     let session = Session {
         id,
         ticket: Uuid::new_v4().to_string(),
-        channel,
-        client_uid: app.config.client_uid,
-        bridge_uid: app.config.bridge_uid,
         state: "starting".into(),
         expires_at_ms: now + app.config.session_ttl_seconds * 1000,
         owner_subject: owner.as_ref().map(|grant| grant.subject.clone()),
         owner_profile_id: owner.as_ref().map(|grant| grant.profile_id.clone()),
     };
 
-    let start_event = json!({
+    let mut start_event = json!({
         "type": "session.start",
         "sessionId": session.id,
-        "agora": {
-            "appId": app.config.agora_app_id,
-            "channel": session.channel,
-            "uid": session.bridge_uid,
-            "token": bridge_rtc_token,
-        }
     });
+    if let (Some(event_object), Some(cred_object)) =
+        (start_event.as_object_mut(), bridge_cred.as_object())
+    {
+        event_object.extend(cred_object.clone());
+    }
     let bridge_sent = inner
         .bridge
         .as_ref()
@@ -734,19 +841,19 @@ async fn create_session(req: &mut Request, res: &mut Response) {
         return;
     }
 
-    let response = json!({
+    let mut response = json!({
         "sessionId": session.id,
         "state": session.state,
         "expiresAtMs": session.expires_at_ms,
         "eventsWsPath": format!("/ws/client/{}", session.id),
         "demoMode": app.config.demo_mode,
-        "agora": {
-            "appId": app.config.agora_app_id,
-            "channel": session.channel,
-            "uid": session.client_uid,
-            "token": client_rtc_token,
-        }
+        "rtcProvider": app.config.rtc_provider,
     });
+    if let (Some(response_object), Some(cred_object)) =
+        (response.as_object_mut(), client_cred.as_object())
+    {
+        response_object.extend(cred_object.clone());
+    }
     let cookie = session_cookie(&session, &app.config);
     let api_cookie = session_api_cookie(&session, &app.config);
     info!(
@@ -1492,8 +1599,12 @@ mod tests {
             static_dir: "static".into(),
             public_base_url: "http://localhost".into(),
             allowed_origin: None,
+            rtc_provider: "agora".into(),
             agora_app_id: String::new(),
             agora_app_certificate: String::new(),
+            livekit_url: String::new(),
+            livekit_api_key: String::new(),
+            livekit_api_secret: String::new(),
             channel_prefix: "test".into(),
             client_uid: 1001,
             bridge_uid: 9001,
@@ -1541,6 +1652,47 @@ mod tests {
         assert!(config.validate().is_err());
 
         config.octos_service_token = config.bridge_shared_secret.clone();
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn rtc_provider_must_be_known() {
+        let mut config = base_config();
+        config.rtc_provider = "twilio".into();
+        assert!(config.validate().is_err());
+    }
+
+    fn livekit_production_config() -> Config {
+        let mut config = base_config();
+        config.demo_mode = false;
+        config.rtc_provider = "livekit".into();
+        config.public_base_url = "https://asr.example.com".into();
+        config.allowed_origin = Some("https://asr.example.com".into());
+        config.client_access_token = "client-access-token-at-least-24".into();
+        config.bridge_shared_secret = "bridge-secret-at-least-24-characters".into();
+        config.livekit_url = "wss://rtc.example.com:9443".into();
+        config.livekit_api_key = "APIkey12345".into();
+        config.livekit_api_secret = "livekit-secret-32-characters!!".into();
+        config
+    }
+
+    #[test]
+    fn livekit_provider_needs_no_agora_credentials() {
+        assert!(livekit_production_config().validate().is_ok());
+    }
+
+    #[test]
+    fn livekit_provider_requires_wss_and_credentials_in_production() {
+        let mut config = livekit_production_config();
+        config.livekit_url = "ws://rtc.example.com:7880".into();
+        assert!(config.validate().is_err());
+
+        let mut config = livekit_production_config();
+        config.livekit_api_key = String::new();
+        assert!(config.validate().is_err());
+
+        let mut config = livekit_production_config();
+        config.livekit_api_secret = "short".into();
         assert!(config.validate().is_err());
     }
 

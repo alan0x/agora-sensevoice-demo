@@ -68,6 +68,8 @@ const runtime = {
   session: null,
   socket: null,
   rtcClient: null,
+  room: null,
+  remoteAudioElement: null,
   microphone: null,
   muted: false,
   meterTimer: null,
@@ -729,11 +731,45 @@ async function joinAgora(config) {
   log("已加入 Agora RTC 并发布麦克风音轨", { channel: config.channel, uid: config.uid });
 }
 
+async function joinLivekit(config) {
+  if (!window.LivekitClient) throw new Error("LiveKit SDK 加载失败");
+  const LivekitClient = window.LivekitClient;
+  const room = new LivekitClient.Room();
+  runtime.room = room;
+
+  room.on(LivekitClient.RoomEvent.TrackSubscribed, (track, publication, participant) => {
+    if (track.kind !== "audio") return;
+    const element = track.attach();
+    element.addEventListener("canplay", () => element.play().catch(() => {}));
+    document.body.appendChild(element);
+    runtime.remoteAudioElement = element;
+    log("已订阅远端音频 (TTS 实时收听)", { identity: participant?.identity });
+  });
+
+  room.on(LivekitClient.RoomEvent.Disconnected, () => {
+    log("LiveKit 连接已断开");
+    setDot(ui.agoraDot, "");
+  });
+
+  await room.connect(config.url, config.token);
+  await room.localParticipant.setMicrophoneEnabled(true, {
+    echoCancellation: true,
+    noiseSuppression: true,
+    autoGainControl: true,
+  });
+  setDot(ui.agoraDot, "on");
+  startMeter();
+  log("已加入 LiveKit 房间并发布麦克风", { room: config.room, identity: config.identity });
+}
+
 function startMeter() {
   clearInterval(runtime.meterTimer);
   ui.level.classList.add("active");
   runtime.meterTimer = setInterval(() => {
-    const volume = runtime.microphone?.getVolumeLevel?.() || 0;
+    const volume =
+      runtime.microphone?.getVolumeLevel?.() ??
+      runtime.room?.localParticipant?.audioLevel ??
+      0;
     observeSpeechLevel(volume, performance.now());
     ui.levelBars.forEach((bar, index) => {
       const threshold = index / ui.levelBars.length;
@@ -772,6 +808,8 @@ async function start() {
     if (session.demoMode) {
       setDot(ui.agoraDot, "on");
       log("MOCK 模式：跳过浏览器麦克风与 Agora 入会");
+    } else if (session.livekit) {
+      await joinLivekit(session.livekit);
     } else {
       await joinAgora(session.agora);
     }
@@ -789,7 +827,11 @@ async function start() {
 
 async function toggleMute() {
   runtime.muted = !runtime.muted;
-  if (runtime.microphone) await runtime.microphone.setEnabled(!runtime.muted);
+  if (runtime.room) {
+    await runtime.room.localParticipant.setMicrophoneEnabled(!runtime.muted);
+  } else if (runtime.microphone) {
+    await runtime.microphone.setEnabled(!runtime.muted);
+  }
   ui.mute.textContent = runtime.muted ? "取消静音" : "静音";
   ui.level.classList.toggle("active", !runtime.muted);
   log(runtime.muted ? "麦克风已静音" : "麦克风已取消静音");
@@ -865,10 +907,14 @@ async function cleanupLocal() {
   runtime.microphone?.stop();
   runtime.microphone?.close();
   if (runtime.rtcClient) await runtime.rtcClient.leave().catch(() => {});
+  if (runtime.room) await runtime.room.disconnect().catch(() => {});
+  runtime.remoteAudioElement?.remove();
   runtime.socket?.close();
   runtime.session = null;
   runtime.socket = null;
   runtime.rtcClient = null;
+  runtime.room = null;
+  runtime.remoteAudioElement = null;
   runtime.microphone = null;
   runtime.muted = false;
   runtime.speech = createSpeechState();
@@ -932,6 +978,7 @@ document.querySelectorAll(".sidebar-link").forEach((link) => {
 
 window.addEventListener("pagehide", () => {
   runtime.microphone?.close();
+  runtime.room?.disconnect();
   if (!runtime.session) return;
   const headers = runtime.accessToken ? { Authorization: `Bearer ${runtime.accessToken}` } : {};
   fetch(`/api/v1/sessions/${runtime.session.sessionId}`, {

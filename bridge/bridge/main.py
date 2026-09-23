@@ -13,6 +13,7 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 import websockets
 
 from .agora_receiver import AgoraReceiver
+from .livekit_receiver import LivekitReceiver
 from .segmenter import PcmSegmenter, SegmentEvent, SegmenterConfig
 from .sensevoice import SenseVoiceClient
 from .tts import TTS_SOURCE_RATE, TTS_TARGET_RATE, PcmUpsampler2x, TtsClient
@@ -40,6 +41,7 @@ class RealSession:
         asr_url: str,
         emit: Callable[[Dict[str, Any]], Awaitable[None]],
         tts_url: Optional[str] = None,
+        provider: str = "agora",
     ) -> None:
         self.session_id = session_id
         self.emit = emit
@@ -58,14 +60,23 @@ class RealSession:
                 "ASR_PROTOCOL", os.getenv("SENSEVOICE_PROTOCOL", "octos-json")
             ),
         )
-        self.receiver = AgoraReceiver(
-            appid=agora["appId"],
-            channel=agora["channel"],
-            token=agora["token"],
-            uid=int(agora["uid"]),
-            on_pcm=self._on_pcm,
-            on_network_stats=self._on_network_stats,
-        )
+        if provider == "livekit":
+            self.receiver = LivekitReceiver(
+                url=agora["url"],
+                room=agora["room"],
+                token=agora["token"],
+                on_pcm=self._on_pcm,
+                on_network_stats=self._on_network_stats,
+            )
+        else:
+            self.receiver = AgoraReceiver(
+                appid=agora["appId"],
+                channel=agora["channel"],
+                token=agora["token"],
+                uid=int(agora["uid"]),
+                on_pcm=self._on_pcm,
+                on_network_stats=self._on_network_stats,
+            )
         self.worker: Optional[asyncio.Task] = None
         self.partial_task: Optional[asyncio.Task] = None
         self.sequence = 0
@@ -359,7 +370,9 @@ class RealSession:
             except asyncio.CancelledError:
                 pass
         self.receiver.clear_audio_buffer()
-        self.receiver.stop()
+        stop_result = self.receiver.stop()
+        if asyncio.iscoroutine(stop_result):
+            await stop_result
         if self.worker:
             await self.queue.put(None)
             await self.worker
@@ -528,12 +541,15 @@ class BridgeApp:
             else:
                 if not self.asr_urls:
                     raise RuntimeError("ASR_URLS or ASR_URL is required in real mode")
+                provider = "livekit" if "livekit" in payload else "agora"
+                rtc_config = payload.get("livekit") or payload["agora"]
                 session = RealSession(
                     session_id,
-                    payload["agora"],
+                    rtc_config,
                     self._next_asr_url(),
                     self.emit,
                     tts_url=self.tts_url,
+                    provider=provider,
                 )
             self.sessions[session_id] = session
             try:
