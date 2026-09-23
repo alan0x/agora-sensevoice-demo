@@ -17,5 +17,3 @@ web-check:
 	bash -n bridge/start-ominix-asr.sh
 	bash -n bridge/start-ominix-pool.sh
 	bash -n bridge/start-ominix-tts.sh
-	bash -n deploy/macos/install-launch-agents.sh
-	bash -n deploy/macos/status.sh

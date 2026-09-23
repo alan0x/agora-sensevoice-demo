@@ -9,3 +9,6 @@ __pycache__/
 agora_rtc_log/
 *.log
 artifacts/
+
+# Internal deployment details (never public)
+internal/
