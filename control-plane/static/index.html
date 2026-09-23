@@ -63,7 +63,7 @@
             <div class="hero-tag">ENTERPRISE STREAMING AUDIO INFRASTRUCTURE</div>
             <h1 class="hero-headline">低延迟实时语音转写与合成 API</h1>
             <p class="hero-subtext">
-              结合 Agora SD-RTN 全球实时传输网络与 OminiX (Qwen3-ASR / Qwen3-TTS) 私有算力。
+              结合 LiveKit 自托管实时传输网络与 OminiX (Qwen3-ASR / Qwen3-TTS) 私有算力。
               专为实时人机语音对话、长语音流式听写与即时播报打造，具备全双工低延迟、零入站公网暴露与完备的可观测性。
             </p>
             <div class="hero-cta-group">
@@ -106,7 +106,7 @@
         <div class="section-container">
           <div class="section-header">
             <h2 class="section-title">全链路系统架构</h2>
-            <p class="section-subtitle">音频流经 Agora SD-RTN 传输保证抗丢包与低延时，信令与转写文本经 VPS 轻量控制面毫秒级转发。</p>
+            <p class="section-subtitle">音频流经自托管 LiveKit SFU 传输保证抗丢包与低延时，信令与转写文本经 VPS 轻量控制面毫秒级转发。</p>
           </div>
 
           <div class="arch-diagram">
@@ -115,7 +115,7 @@
                 <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
               </div>
               <div class="node-title">客户端 / 业务前端</div>
-              <div class="node-desc">Agora Web/iOS/Android SDK 推流<br>WebSocket 订阅文本</div>
+              <div class="node-desc">LiveKit Web/Mobile SDK 推流<br>WebSocket 订阅文本</div>
             </div>
 
             <div class="arch-flow">
@@ -131,8 +131,8 @@
               <div class="node-icon">
                 <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/></svg>
               </div>
-              <div class="node-title">Agora SD-RTN & VPS 控制面</div>
-              <div class="node-desc">Agora 边缘全球路由<br>Rust Salvo 鉴权与会话分发</div>
+              <div class="node-title">LiveKit SFU & VPS 控制面</div>
+              <div class="node-desc">自托管 SFU 媒体转发<br>Rust Salvo 鉴权与会话分发</div>
             </div>
 
             <div class="arch-flow">
@@ -149,7 +149,7 @@
                 <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><line x1="9" y1="1" x2="9" y2="4"/><line x1="15" y1="1" x2="15" y2="4"/><line x1="9" y1="20" x2="9" y2="23"/><line x1="15" y1="20" x2="15" y2="23"/><line x1="20" y1="9" x2="23" y2="9"/><line x1="20" y1="14" x2="23" y2="14"/><line x1="1" y1="9" x2="4" y2="9"/><line x1="1" y1="14" x2="4" y2="14"/></svg>
               </div>
               <div class="node-title">内网 Bridge & OminiX</div>
-              <div class="node-desc">Agora Server SDK 接收<br>Qwen3-ASR & TTS 本地推理</div>
+              <div class="node-desc">LiveKit Python SDK 接收<br>Qwen3-ASR & TTS 本地推理</div>
             </div>
           </div>
         </div>
@@ -175,7 +175,7 @@
                 <tr>
                   <td><span class="method-badge post">POST</span></td>
                   <td><code>/api/v1/sessions</code></td>
-                  <td>创建实时语音会话，签发 Agora RTC 临时凭证与专属 WebSocket 路由</td>
+                  <td>创建实时语音会话，签发 LiveKit 房间临时凭证与专属 WebSocket 路由</td>
                   <td><span class="auth-tag">Bearer Token</span></td>
                 </tr>
                 <tr>
@@ -199,7 +199,7 @@
                 <tr>
                   <td><span class="method-badge delete">DELETE</span></td>
                   <td><code>/api/v1/sessions/{id}</code></td>
-                  <td>正常结束会话，释放 Agora 频道与 Bridge 资源</td>
+                  <td>正常结束会话，释放 LiveKit 房间与 Bridge 资源</td>
                   <td><span class="auth-tag">Bearer / Cookie</span></td>
                 </tr>
                 <tr>
@@ -230,7 +230,7 @@
             <div class="sidebar-group">
               <div class="sidebar-heading">实时语音流接口</div>
               <a href="#doc-create-session" class="sidebar-link">创建会话 (POST /sessions)</a>
-              <a href="#doc-agora-stream" class="sidebar-link">Agora RTC 推流接入</a>
+              <a href="#doc-livekit-stream" class="sidebar-link">LiveKit RTC 推流接入</a>
               <a href="#doc-ws-events" class="sidebar-link">WebSocket 事件流协议</a>
               <a href="#doc-speak" class="sidebar-link">语音合成 (POST /speak)</a>
               <a href="#doc-lifecycle" class="sidebar-link">断句与会话释放</a>
@@ -282,7 +282,7 @@
             <section id="doc-quickstart" class="doc-section">
               <div class="doc-eyebrow">GUIDE · QUICKSTART</div>
               <h2 class="doc-subtitle">快速开始示例</h2>
-              <p>只需发起一个 POST 请求创建会话，即可获得 Agora 频道信息及 WebSocket 订阅地址：</p>
+              <p>只需发起一个 POST 请求创建会话，即可获得 LiveKit 房间凭证及 WebSocket 订阅地址：</p>
 
               <div class="tabs-code-wrapper">
                 <div class="code-tabs-nav">
@@ -321,7 +321,7 @@ response = httpx.post(f&quot;{BASE_URL}/api/v1/sessions&quot;, headers=headers, 
 session = response.json()
 
 print(f&quot;Session ID: {session['sessionId']}&quot;)
-print(f&quot;Agora Channel: {session['agora']['channel']}&quot;)
+print(f&quot;LiveKit Room: {session['livekit']['room']}&quot;)
 print(f&quot;WS Path: {session['eventsWsPath']}&quot;)">复制</button>
                     </div>
                     <pre class="code-pre"><code>import httpx
@@ -334,7 +334,7 @@ response = httpx.post(f"{BASE_URL}/api/v1/sessions", headers=headers, json={})
 session = response.json()
 
 print(f"Session ID: {session['sessionId']}")
-print(f"Agora Channel: {session['agora']['channel']}")
+print(f"LiveKit Room: {session['livekit']['room']}")
 print(f"WS Path: {session['eventsWsPath']}")</code></pre>
                   </div>
                 </div>
@@ -373,7 +373,7 @@ console.log("Created session:", session.sessionId);</code></pre>
             <section id="doc-create-session" class="doc-section">
               <div class="doc-eyebrow">API REFERENCE</div>
               <h2 class="doc-subtitle">创建会话 · POST /api/v1/sessions</h2>
-              <p>请求控制面初始化一个双向实时通信会话，动态签发 Agora AccessToken2 短期凭据。</p>
+              <p>请求控制面初始化一个双向实时通信会话，动态签发 LiveKit 房间级短期凭据（JWT)。</p>
 
               <h3 class="param-title">响应结果 (201 Created)</h3>
               <div class="code-block-wrapper">
@@ -385,11 +385,12 @@ console.log("Created session:", session.sessionId);</code></pre>
   &quot;expiresAtMs&quot;: 1727025600000,
   &quot;eventsWsPath&quot;: &quot;/ws/client/e7fa699f-3507-4e6a-a006-25f0e9b2512a&quot;,
   &quot;demoMode&quot;: false,
-  &quot;agora&quot;: {
-    &quot;appId&quot;: &quot;99f8...&quot;,
-    &quot;channel&quot;: &quot;asr-8bf2a0...&quot;,
-    &quot;uid&quot;: 1001,
-    &quot;token&quot;: &quot;007eJxTY...&quot;
+  &quot;rtcProvider&quot;: &quot;livekit&quot;,
+  &quot;livekit&quot;: {
+    &quot;url&quot;: &quot;wss://rtc.example.com:9443&quot;,
+    &quot;room&quot;: &quot;asr-8bf2a0...&quot;,
+    &quot;identity&quot;: &quot;client-1001&quot;,
+    &quot;token&quot;: &quot;eyJhbGciOi...&quot;
   }
 }">复制</button>
                 </div>
@@ -399,62 +400,63 @@ console.log("Created session:", session.sessionId);</code></pre>
   "expiresAtMs": 1727025600000,
   "eventsWsPath": "/ws/client/e7fa699f-3507-4e6a-a006-25f0e9b2512a",
   "demoMode": false,
-  "agora": {
-    "appId": "99f8...",
-    "channel": "asr-8bf2a0...",
-    "uid": 1001,
-    "token": "007eJxTY..."
+  "rtcProvider": "livekit",
+  "livekit": {
+    "url": "wss://rtc.example.com:9443",
+    "room": "asr-8bf2a0...",
+    "identity": "client-1001",
+    "token": "eyJhbGciOi..."
   }
 }</code></pre>
               </div>
             </section>
 
-            <!-- Agora RTC Audio Streaming -->
-            <section id="doc-agora-stream" class="doc-section">
+            <!-- LiveKit RTC Audio Streaming -->
+            <section id="doc-livekit-stream" class="doc-section">
               <div class="doc-eyebrow">CLIENT INTEGRATION</div>
-              <h2 class="doc-subtitle">Agora RTC 音频推流与订阅</h2>
+              <h2 class="doc-subtitle">LiveKit RTC 音频推流与订阅</h2>
               <p>
-                客户端引入声网 Web / Mobile SDK，入会并采集音频推送到 <code>agora.channel</code>。Bridge 会作为远端受众接收 16kHz PCM 进行 VAD 和 ASR。
+                客户端引入 LiveKit Web / Mobile SDK，加入 <code>livekit.room</code> 指定的房间并采集音频推流。Bridge 会作为远端受众接收 16kHz PCM 进行 VAD 和 ASR。
               </p>
               <div class="code-block-wrapper">
                 <div class="code-header">
-                  <span class="code-title">JavaScript (AgoraRTC Web SDK)</span>
-                  <button class="copy-btn" data-clipboard="const client = AgoraRTC.createClient({ mode: 'live', codec: 'vp8' });
-await client.setClientRole('host');
-await client.join(agora.appId, agora.channel, agora.token, agora.uid);
-
-// 创建并发布麦克风音轨
-const mic = await AgoraRTC.createMicrophoneAudioTrack({
-  encoderConfig: 'speech_standard',
-  AEC: true, ANS: true, AGC: true
-});
-await client.publish([mic]);
+                  <span class="code-title">JavaScript (livekit-client SDK)</span>
+                  <button class="copy-btn" data-clipboard="const room = new LivekitClient.Room();
 
 // 监听远端音频发布（用于实时收听 TTS 播报）
-client.on('user-published', async (user, mediaType) => {
-  if (mediaType === 'audio') {
-    await client.subscribe(user, mediaType);
-    user.audioTrack.play();
+room.on(LivekitClient.RoomEvent.TrackSubscribed, (track) => {
+  if (track.kind === 'audio') {
+    const element = track.attach();
+    element.play();
+    document.body.appendChild(element);
   }
+});
+
+// 入会并发布麦克风（自动启用 AEC / NS / AGC）
+await room.connect(livekit.url, livekit.token);
+await room.localParticipant.setMicrophoneEnabled(true, {
+  echoCancellation: true,
+  noiseSuppression: true,
+  autoGainControl: true
 });">复制</button>
                 </div>
-                <pre class="code-pre"><code>const client = AgoraRTC.createClient({ mode: 'live', codec: 'vp8' });
-await client.setClientRole('host');
-await client.join(agora.appId, agora.channel, agora.token, agora.uid);
-
-// 创建并发布麦克风音轨
-const mic = await AgoraRTC.createMicrophoneAudioTrack({
-  encoderConfig: 'speech_standard',
-  AEC: true, ANS: true, AGC: true
-});
-await client.publish([mic]);
+                <pre class="code-pre"><code>const room = new LivekitClient.Room();
 
 // 监听远端音频发布（用于实时收听 TTS 播报）
-client.on('user-published', async (user, mediaType) => {
-  if (mediaType === 'audio') {
-    await client.subscribe(user, mediaType);
-    user.audioTrack.play();
+room.on(LivekitClient.RoomEvent.TrackSubscribed, (track) => {
+  if (track.kind === 'audio') {
+    const element = track.attach();
+    element.play();
+    document.body.appendChild(element);
   }
+});
+
+// 入会并发布麦克风（自动启用 AEC / NS / AGC）
+await room.connect(livekit.url, livekit.token);
+await room.localParticipant.setMicrophoneEnabled(true, {
+  echoCancellation: true,
+  noiseSuppression: true,
+  autoGainControl: true
 });</code></pre>
               </div>
             </section>
@@ -671,7 +673,7 @@ client.on('user-published', async (user, mediaType) => {
           <span class="topo-line"></span>
           <div class="topo-step">
             <span class="status-dot" id="agoraDot"></span>
-            <span>Agora RTC 网络</span>
+            <span>LiveKit RTC 网络</span>
           </div>
           <span class="topo-line"></span>
           <div class="topo-step">
@@ -835,7 +837,7 @@ client.on('user-published', async (user, mediaType) => {
             <div class="trace-info-box">
               <div class="trace-box-label">最新解析断句</div>
               <p id="traceText" class="trace-text-content">尚未收到最终识别结果。</p>
-              <p id="networkSummary" class="network-stats-text">Agora 网络统计：等待数据</p>
+              <p id="networkSummary" class="network-stats-text">RTC 网络统计：等待数据</p>
             </div>
             <div class="trace-stages-box">
               <div class="trace-box-label">分段延时瀑布 (Waterfall)</div>

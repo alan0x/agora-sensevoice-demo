@@ -647,13 +647,13 @@ function renderObservability() {
   ui.traceText.textContent = latest.text || "—";
 
   if (runtime.networkQuality) {
-    ui.networkSummary.textContent = `Agora 网络质量: 上行等级 ${runtime.networkQuality.uplinkNetworkQuality || "—"}, 下行等级 ${runtime.networkQuality.downlinkNetworkQuality || "—"}`;
+    ui.networkSummary.textContent = `RTC 网络质量: 上行等级 ${runtime.networkQuality.uplinkNetworkQuality || "—"}, 下行等级 ${runtime.networkQuality.downlinkNetworkQuality || "—"}`;
   }
 
   // Render waterfall
   const stages = latest.stages;
   const stageDefs = [
-    { key: "agoraNetworkMs", label: "Agora 网络传输", val: stages.agoraNetworkMs || 0 },
+    { key: "agoraNetworkMs", label: "RTC 网络传输", val: stages.agoraNetworkMs || 0 },
     { key: "endpointMs", label: "Bridge 断句端点", val: stages.endpointMs || 0 },
     { key: "asrInferenceMs", label: "OminiX ASR 推理", val: stages.asrInferenceMs || 0 },
     { key: "vpsRelayMs", label: "VPS 转发及交付", val: stages.vpsRelayMs || 0 },
