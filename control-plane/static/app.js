@@ -820,6 +820,16 @@ async function start() {
     appendFinal(`⚠ 启动失败: ${error.message}`);
     setSessionState("启动失败");
     setDot(ui.agoraDot, "error");
+    // 服务端把不认识的 Bearer 当一次性 grant 处理；本地存的密钥过期或
+    // 输错时会报 "browser grant invalid"。此时清掉缓存密钥并重新索要。
+    if (/browser grant/i.test(error.message)) {
+      runtime.accessToken = "";
+      localStorage.removeItem(STORAGE_KEY);
+      sessionStorage.removeItem("asrAccessToken");
+      updateTokenUI();
+      appendFinal("⚠ 已保存的访问密钥无效，请重新配置。");
+      openTokenModal();
+    }
     if (runtime.session) await stop();
     else setRunning(false);
   }
