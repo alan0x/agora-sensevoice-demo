@@ -1,79 +1,98 @@
-# Private Realtime Speech — LiveKit/Agora × Qwen3-ASR/TTS
+# Octos Audio — Private Realtime Speech (LiveKit/Agora × Qwen3-ASR/TTS)
 
 > A self-hosted, production-shaped reference architecture for real-time speech
-> recognition and synthesis: browser audio flows over RTC into a private
+> recognition and synthesis. Browser audio flows over RTC into a private
 > inference host running Qwen3-ASR / Qwen3-TTS on Apple Silicon (via
 > [OminiX-API](https://github.com/OminiX-ai/OminiX-API)), and results stream
-> back over a lightweight control plane. No audio ever leaves your own
-> infrastructure.
+> back over a lightweight control plane. **No audio ever leaves your own
+> infrastructure.**
 
-一个面向隐私与自建算力场景的**实时语音服务参考实现**：浏览器麦克风音频经 RTC 实时传输到自有推理主机（Apple Silicon 上的 Qwen3-ASR/TTS），转写文字通过轻量控制面毫秒级回传；支持把合成语音实时播回通话频道。适合想在数据不出自有基础设施的前提下构建语音交互产品的团队。
+## What problem does it solve?
 
-## 它能解决什么问题
+- **Privacy & compliance**: audio and all ASR/TTS inference stay inside your
+  own infrastructure — nothing passes through a third-party AI API.
+- **Cost control**: inference runs on local Apple Silicon (M-series) and
+  scales linearly with an instance pool; no per-minute billing.
+- **Pluggable RTC transport**: self-hosted LiveKit SFU (zero third-party
+  dependency) or Agora Cloud, switchable with one config flag.
+- **Production shape, not a toy**: short-lived dynamic credentials, session
+  auth, admission control, pooled inference workers, and end-to-end latency
+  observability out of the box.
 
-- **隐私合规**：音频与识别/合成推理全程在自有基础设施内，不经过任何第三方 AI API;
-- **成本可控**：推理跑在 Apple Silicon 本机（M 系列）上，按并发线性扩展实例池，无按分钟计费；
-- **RTC 传输可自选**：自托管 LiveKit SFU（完全无第三方依赖）或 Agora 云，一键切换；
-- **生产形态而非玩具**：动态短期凭证、会话鉴权、容量准入、并发实例池、端到端延时瀑布观测一应俱全。
-
-## 架构
+## Architecture
 
 ```text
-浏览器(Web SDK) ──RTC 音频──> RTC 层(LiveKit 自托管 SFU / Agora 云)
-                                   │ 16kHz PCM
-                                   ▼
-                     推理主机 Bridge(Python)──HTTP──> OminiX 实例池(Qwen3-ASR/TTS)
-                                   │ 出站 WSS
-浏览器(Web SDK) <──文字/事件 WSS── 控制面(Rust + Salvo,鉴权/会话/凭证签发)
+Browser (Web SDK) ──RTC audio──> RTC layer (self-hosted LiveKit SFU / Agora)
+                                      │ 16 kHz PCM
+                                      ▼
+                        Inference host: Bridge (Python) ──HTTP──> OminiX pool
+                                      │            (Qwen3-ASR / Qwen3-TTS)
+                                      │ outbound WSS
+Browser (Web SDK) <──text/events WSS── Control plane (Rust + Salvo)
+                                       auth · sessions · credential issuing
 ```
 
-- **RTC 层**只转发音频；推理主机和模型不暴露任何公网入站端口，Bridge 全部主动出站连接；
-- **控制面**不承载音频与推理：只负责鉴权、按会话动态签发短期 RTC 凭证、转发识别事件；
-- **断句**在 Bridge 内完成（可替换的 VAD 端点检测），TTS 与 ASR 分实例隔离，互不阻塞。
+- The RTC layer only forwards audio. The inference host and models expose **no
+  public inbound ports** — the Bridge dials out for everything.
+- The control plane never touches audio or inference: it authenticates
+  clients, issues short-lived per-session RTC credentials (Agora
+  AccessToken2 or LiveKit JWT), and relays recognition events.
+- Endpointing (VAD) runs in the Bridge and is replaceable. TTS and ASR run in
+  separate instances so long syntheses never block recognition.
 
-## 组件
+## Components
 
-| 目录 | 内容 |
+| Path | Contents |
 |---|---|
-| `control-plane/` | Rust + Salvo：鉴权、会话管理、RTC 凭证签发（AccessToken2 / LiveKit JWT)、WebSocket 转发、静态站点（主页 / 文档 / Playground) |
-| `bridge/` | Python:RTC 收发（Agora Server SDK 或 livekit-rtc)、断句器、ASR 实例池轮询、TTS 合成与播放、压力测试工具 |
-| `deploy/` | Docker Compose、环境变量模板、Nginx 反代示例 |
-| `docs/PROTOCOL.md` | 控制面协议（REST / WebSocket 事件 / metrics 约定） |
+| `control-plane/` | Rust + Salvo: auth, session management, RTC credential issuing, WebSocket relay, static site (home / docs / playground) |
+| `bridge/` | Python: RTC receive/publish (Agora Server SDK or livekit-rtc), endpointing, ASR pool routing, TTS synthesis & playout, load-test tools |
+| `deploy/` | Docker Compose, environment templates, Nginx reverse-proxy example |
+| `docs/PROTOCOL.md` | Control-plane protocol: REST, WebSocket events, metrics conventions |
 
-## 功能特性
+## Features
 
-- 多会话并发：`SESSION_CAPACITY` 准入 + ASR 实例池 round-robin,Apple Silicon 单机实测 90+ 并发会话;
-- TTS 双向链路：文字经控制面下发，Bridge 合成后发布进 RTC 频道播放，支持音色/语速/语气参数与 barge-in;
-- 延时观测：按语句关联 Agora 网络、断句、推理、转发、渲染各阶段耗时，P50/P95 统计与 JSON 导出;
-- Mock 模式：无 RTC 凭据也可开发调试控制面与前端。
+- **Concurrent sessions**: `SESSION_CAPACITY` admission control + round-robin
+  ASR instance pool; 90+ concurrent sessions measured on a single M-series host.
+- **Two-way TTS**: text is pushed through the control plane, synthesized on the
+  Bridge and published into the RTC room; voice/speed/instruct parameters and
+  barge-in are supported.
+- **Latency observability**: per-utterance waterfall (network, endpointing,
+  inference, relay, render), P50/P95 statistics, JSON export.
+- **Mock mode**: develop the control plane and frontend without any RTC
+  credentials.
 
-## 快速开始（Mock 模式）
+## Quickstart (mock mode)
 
-无需任何凭据即可体验完整控制面与前端：
+No credentials required:
 
 ```bash
-cp deploy/.env.example deploy/.env   # 将 DEMO_MODE=true
+cp deploy/.env.example deploy/.env   # set DEMO_MODE=true
 docker compose --env-file deploy/.env -f deploy/docker-compose.yml --profile mock up -d --build
-# 打开 http://localhost:18080,Mock Bridge 会推送模拟识别结果
+# open http://localhost:18080 — the mock bridge streams simulated transcripts
 ```
 
-真实链路需要：一台 Apple Silicon 主机运行 [OminiX-API](https://github.com/OminiX-ai/OminiX-API)(Qwen3-ASR/TTS 模型）,RTC 层选择自托管 [LiveKit](https://github.com/livekit/livekit) SFU 或 Agora 项目，按 `deploy/.env.example` 与 `bridge/.env.example` 配置后分别启动控制面与 Bridge(`bridge/start-real.sh`)。
+A real deployment needs an Apple Silicon host running
+[OminiX-API](https://github.com/OminiX-ai/OminiX-API) (Qwen3-ASR/TTS models),
+and an RTC layer: a self-hosted [LiveKit](https://github.com/livekit/livekit)
+SFU or an Agora project. Configure `deploy/.env.example` and
+`bridge/.env.example`, then start the control plane and the bridge
+(`bridge/start-real.sh`).
 
-## 本地检查
+## Checks
 
 ```bash
-make check   # cargo test + clippy, python unittest, JS/shell 语法检查
+make check   # cargo test + clippy, python unittest, JS/shell syntax checks
 ```
 
-要求：Rust 1.96+、Python 3.10+、Node.js。
+Requires Rust 1.96+, Python 3.10+, Node.js.
 
-## 参考
+## References
 
-- [OminiX-API](https://github.com/OminiX-ai/OminiX-API) — Apple Silicon 上的 OpenAI 兼容推理服务
-- [LiveKit](https://github.com/livekit/livekit) — 开源 WebRTC SFU
-- [声网 Agora Web SDK](https://doc.shengwang.cn/doc/rtc/javascript/resources) / [Agora Python Server SDK](https://github.com/AgoraIO-Extensions/Agora-Python-Server-SDK)
+- [OminiX-API](https://github.com/OminiX-ai/OminiX-API) — OpenAI-compatible inference server for Apple Silicon
+- [LiveKit](https://github.com/livekit/livekit) — open-source WebRTC SFU
+- [Agora Web SDK](https://docs.agora.io/en/voice-calling/get-started/get-started-sdk?platform=web) / [Agora Python Server SDK](https://github.com/AgoraIO-Extensions/Agora-Python-Server-SDK)
 - [Salvo](https://docs.rs/salvo/latest/salvo/)
 
 ## License
 
-MIT，详见 [LICENSE](LICENSE)。
+MIT — see [LICENSE](LICENSE).
